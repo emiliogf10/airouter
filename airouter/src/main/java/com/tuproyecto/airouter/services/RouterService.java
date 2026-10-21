@@ -60,6 +60,9 @@ public class RouterService {
             "analizar en profundidad"
     );
 
+    /**
+     * Repositorio JPA para la persistencia y consulta del historial de peticiones evaluadas.
+     */
     private final RequestLogRepository requestLogRepository;
 
     /**

@@ -27,14 +27,24 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 class RequestLogRepositoryTest {
 
+    /**
+     * Repositorio JPA bajo prueba conectado a la base de datos H2 en memoria.
+     */
     @Autowired
     private RequestLogRepository requestLogRepository;
 
+    /**
+     * Limpia todos los registros de la tabla {@code request_logs} antes de cada prueba.
+     */
     @BeforeEach
     void setUp() {
         requestLogRepository.deleteAll();
     }
 
+    /**
+     * Comprueba que al persistir una entidad {@link RequestLog} sin {@code id} ni {@code createdAt},
+     * JPA genere automáticamente el {@code UUID} y el callback {@code @PrePersist} asigne la marca temporal.
+     */
     @Test
     @DisplayName("Debe generar UUID automáticamente y asignar createdAt mediante @PrePersist cuando es nulo")
     void shouldGenerateUuidAndPopulateCreatedAtOnPrePersist() {
@@ -56,6 +66,11 @@ class RequestLogRepositoryTest {
         assertEquals(8, saved.getTokensEstimated());
     }
 
+    /**
+     * Verifica que los métodos derivados {@link RequestLogRepository#findAllByOrderByCreatedAtDesc()}
+     * y {@link RequestLogRepository#findByUserIdOrderByCreatedAtDesc(String)} ordenen los resultados
+     * de más reciente a más antiguo.
+     */
     @Test
     @DisplayName("Debe recuperar los registros ordenados por createdAt descendente de forma global y por usuario")
     void shouldFindLogsOrderedByCreatedAtDescGloballyAndByUserId() {
@@ -102,6 +117,11 @@ class RequestLogRepositoryTest {
         assertTrue(nonExistentUser.isEmpty());
     }
 
+    /**
+     * Comprueba la implementación manual de {@link RequestLog#equals(Object)} y {@link RequestLog#hashCode()}
+     * basada únicamente en la clave primaria {@code id}, garantizando que entidades transitorias sin {@code id}
+     * no se consideren iguales entre sí.
+     */
     @Test
     @DisplayName("Debe cumplir el contrato de equals y hashCode basado exclusivamente en el id de la entidad")
     void shouldFulfillEqualsAndHashCodeContractBasedOnId() {

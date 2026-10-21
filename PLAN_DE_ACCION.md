@@ -6,6 +6,8 @@ Este documento es la fuente de verdad del estado del proyecto. Los agentes deben
 *   **[ALTA]** Añadir endpoint de métricas/estadísticas agregadas de ahorro y consumo de tokens para el Dashboard.
 *   **[MEDIA]** Iniciar el proyecto frontend (Dashboard) con Vite + React + Tailwind v4 conectado a `/api/v1/router`.
 *   **[BAJA]** Conectar clientes HTTP reales (`RestClient`) para proveedores de IA (Gemini / OpenAI) mediante variables de entorno.
+*   **[DOCUMENTACIÓN]** Crear el **Manual de Usuario** (`docs/MANUAL_DE_USUARIO.md`), explicando de forma clara y funcional el uso de la aplicación.
+*   **[DOCUMENTACIÓN]** Crear el **Manual del Programador** (`docs/MANUAL_DEL_PROGRAMADOR.md`), explicando de forma técnica y detallada la arquitectura, flujo interno, modelo de datos y decisiones de diseño.
 
 ## 🚀 2. Historial de Cambios (Hecho)
 *   *2026-10-20:* Configuración de seguridad base (`RateLimitingFilter` con ventana de 60s por `X-API-Key`/IP, respuesta HTTP 429 con `Retry-After` y enmascaramiento de claves en logs; `SecurityConfig` con CORS restrictivo para `http://localhost:5173`) y ampliación de suite QA a 33 tests.

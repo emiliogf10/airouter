@@ -14,7 +14,8 @@ Este archivo contiene las reglas globales, decisiones arquitectónicas y el esta
 
 ## 📐 Convenciones Globales de Arquitectura
 *   **Lombok:** Uso intensivo en Java (`@Data`, `@RequiredArgsConstructor`, `@Slf4j`) para evitar boilerplate. **Prohibido** usar `@Data`, `@ToString` o `@EqualsAndHashCode` en entidades JPA (`@Entity`); en ellas se usa `@Getter`, `@Setter`, `@Builder`, `@NoArgsConstructor`, `@AllArgsConstructor` y se implementa `equals`/`hashCode` manualmente por `id`.
-*   **Idioma:** Todo el Javadoc, comentarios explicativos y mensajes de commit deben estar en español.
+*   **Idioma y Documentación Javadoc Obligatoria:** Todo el código nuevo que se implemente debe estar exhaustivamente documentado con **Javadoc en español** (clases, interfaces, `record`, métodos públicos y privados relevantes, constantes, atributos y etiquetas `@param`, `@return`, `@throws`). Asimismo, todos los comentarios explicativos en SQL/código y mensajes de commit deben estar en español.
+*   **Manuales del Proyecto (En Hoja de Ruta):** El proyecto contempla la creación y mantenimiento de dos documentos clave: un **Manual de Usuario** (explicación funcional del uso de la aplicación) y un **Manual del Programador** (explicación técnica detallada de la arquitectura y funcionamiento interno).
 *   **Commits:** Uso de Semantic Versioning (ej. `feat:`, `fix:`, `chore:`, `docs:`).
 
 ## 🔌 Puertos y Entorno (Desarrollo)

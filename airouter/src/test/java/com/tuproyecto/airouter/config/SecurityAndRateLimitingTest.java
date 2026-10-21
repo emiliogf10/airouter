@@ -38,17 +38,32 @@ import org.springframework.web.context.WebApplicationContext;
 })
 class SecurityAndRateLimitingTest {
 
+    /**
+     * Contexto web de la aplicación para configurar {@link MockMvc}.
+     */
     @Autowired
     private WebApplicationContext webApplicationContext;
 
+    /**
+     * Filtro de control de tasa de peticiones inyectado para registrar en {@link MockMvc} y limpiar su estado.
+     */
     @Autowired
     private RateLimitingFilter rateLimitingFilter;
 
+    /**
+     * Repositorio JPA de logs utilizado para verificar que las peticiones bloqueadas no se persisten.
+     */
     @Autowired
     private RequestLogRepository requestLogRepository;
 
+    /**
+     * Cliente de pruebas MVC con el filtro {@link RateLimitingFilter} registrado.
+     */
     private MockMvc mockMvc;
 
+    /**
+     * Cuerpo JSON válido reutilizado en las pruebas de control de cuota.
+     */
     private static final String VALID_PAYLOAD = """
             {
                 "userId": "sec-user",
@@ -56,6 +71,9 @@ class SecurityAndRateLimitingTest {
             }
             """;
 
+    /**
+     * Limpia los buckets de rate limiting y la base de datos H2 antes de cada test.
+     */
     @BeforeEach
     void setUp() {
         this.rateLimitingFilter.clearBuckets();
@@ -65,6 +83,13 @@ class SecurityAndRateLimitingTest {
                 .build();
     }
 
+    /**
+     * Verifica que el filtro permita exactamente {@code N} peticiones por minuto, bloquee la petición
+     * {@code N+1} con estado HTTP 429, incluya la cabecera {@code Retry-After} con un valor entre 1 y 60
+     * segundos, y evite que la petición bloqueada se guarde en la base de datos.
+     *
+     * @throws Exception si ocurre un error durante la ejecución de MockMvc
+     */
     @Test
     @DisplayName("RateLimitingFilter debe permitir N peticiones, bloquear la N+1 con HTTP 429, Retry-After (1..60s) y evitar persistencia en BD")
     void shouldAllowUpToMaxRequestsAndBlockNextWith429AndRetryAfterWithoutPersisting() throws Exception {
@@ -97,6 +122,12 @@ class SecurityAndRateLimitingTest {
         assertThat(requestLogRepository.count()).isEqualTo(3L);
     }
 
+    /**
+     * Comprueba que el agotamiento de cuota de un cliente (por {@code X-API-Key} o por dirección IP)
+     * no afecte a otros clientes con claves o direcciones IP diferentes.
+     *
+     * @throws Exception si ocurre un error durante la ejecución de MockMvc
+     */
     @Test
     @DisplayName("RateLimitingFilter debe aislar contadores entre distintas X-API-Key y distintas direcciones IP")
     void shouldIsolateBucketsByApiKeyAndIpAddress() throws Exception {
@@ -156,6 +187,12 @@ class SecurityAndRateLimitingTest {
                 .andExpect(status().isOk());
     }
 
+    /**
+     * Verifica que si se envía una cabecera {@code X-API-Key} vacía o con solo espacios/tabulaciones,
+     * el filtro la descarte y aplique el límite de cuota por dirección IP.
+     *
+     * @throws Exception si ocurre un error durante la ejecución de MockMvc
+     */
     @Test
     @DisplayName("RateLimitingFilter debe ignorar X-API-Key en blanco o con solo espacios y aplicar el límite por dirección IP")
     void shouldFallbackToIpBucketWhenApiKeyHeaderIsBlank() throws Exception {
@@ -201,6 +238,12 @@ class SecurityAndRateLimitingTest {
                 .andExpect(status().isTooManyRequests());
     }
 
+    /**
+     * Verifica que el filtro normalice mediante {@code trim()} el valor de {@code X-API-Key} para impedir
+     * que un cliente multiplique su cuota añadiendo espacios al principio o al final de la clave.
+     *
+     * @throws Exception si ocurre un error durante la ejecución de MockMvc
+     */
     @Test
     @DisplayName("RateLimitingFilter debe normalizar con trim() la cabecera X-API-Key para impedir evasión de cuota con espacios laterales")
     void shouldNormalizeApiKeyWithTrimToPreventQuotaBypass() throws Exception {
@@ -230,6 +273,12 @@ class SecurityAndRateLimitingTest {
                 .andExpect(status().isTooManyRequests());
     }
 
+    /**
+     * Comprueba que las consultas {@code GET /api/v1/router/logs} y las peticiones preflight {@code OPTIONS}
+     * estén excluidas del filtro de rate limiting y no consuman cuota.
+     *
+     * @throws Exception si ocurre un error durante la ejecución de MockMvc
+     */
     @Test
     @DisplayName("RateLimitingFilter no debe consumir cuota en GET /api/v1/router/logs ni en preflight OPTIONS")
     void shouldNotFilterGetLogsOrOptionsPreflight() throws Exception {
@@ -245,6 +294,10 @@ class SecurityAndRateLimitingTest {
         }
     }
 
+    /**
+     * Verifica que {@link RateLimitingFilter#maskClientKeyForAudit(String)} oculte siempre los caracteres
+     * sensibles de cualquier {@code X-API-Key} antes de escribir en los logs de auditoría.
+     */
     @Test
     @DisplayName("RateLimitingFilter.maskClientKeyForAudit nunca debe exponer el valor completo de X-API-Key")
     void shouldMaskApiKeyForAuditLogs() {
@@ -265,6 +318,12 @@ class SecurityAndRateLimitingTest {
         assertThat(nullKey).isEqualTo("unknown");
     }
 
+    /**
+     * Comprueba que {@link SecurityConfig} autorice peticiones CORS desde el origen permitido
+     * ({@code http://localhost:5173}) exponiendo {@code Retry-After} y rechace orígenes externos con HTTP 403.
+     *
+     * @throws Exception si ocurre un error durante la ejecución de MockMvc
+     */
     @Test
     @DisplayName("SecurityConfig debe autorizar CORS para http://localhost:5173 exponiendo Retry-After y rechazar orígenes no autorizados")
     void shouldAllowConfiguredOriginAndRejectUnauthorizedOrigin() throws Exception {
@@ -283,6 +342,12 @@ class SecurityAndRateLimitingTest {
                 .andExpect(status().isForbidden());
     }
 
+    /**
+     * Verifica que {@link SecurityConfig} rechace con HTTP 403 Forbidden cualquier petición preflight CORS
+     * que solicite métodos HTTP no permitidos ({@code DELETE}, {@code PUT}) o cabeceras no autorizadas.
+     *
+     * @throws Exception si ocurre un error durante la ejecución de MockMvc
+     */
     @Test
     @DisplayName("SecurityConfig debe rechazar preflights CORS que soliciten métodos HTTP destructivos no permitidos (DELETE, PUT) o cabeceras no autorizadas")
     void shouldRejectDisallowedCorsMethodsAndHeadersInPreflight() throws Exception {

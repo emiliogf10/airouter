@@ -36,12 +36,22 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class RouterServiceTest {
 
+    /**
+     * Mock del repositorio JPA de logs de peticiones para aislar las pruebas de la base de datos.
+     */
     @Mock
     private RequestLogRepository requestLogRepository;
 
+    /**
+     * Instancia del servicio bajo prueba con sus dependencias simuladas inyectadas.
+     */
     @InjectMocks
     private RouterService routerService;
 
+    /**
+     * Verifica que un prompt corto y sin palabras clave complejas se enrute al modelo económico
+     * ({@code gemini-2.5-flash}), se calcule su estimación de tokens y se persista en el repositorio.
+     */
     @Test
     @DisplayName("Debe enrutar al modelo económico (gemini-2.5-flash) cuando el prompt es corto y sencillo")
     void shouldRouteToFastModelWhenPromptIsShortAndSimple() {
@@ -71,6 +81,10 @@ class RouterServiceTest {
         assertEquals(RouterService.MODEL_FAST, captor.getValue().getModelRouted());
     }
 
+    /**
+     * Comprueba el comportamiento exacto en la frontera del umbral de tokens ({@code 50} tokens = 200 caracteres
+     * frente a {@code 51} tokens = 201 caracteres).
+     */
     @Test
     @DisplayName("Debe enrutar a gemini-2.5-flash en el límite exacto de 50 tokens (200 caracteres) y a gemini-2.5-pro con 51 tokens (201 caracteres)")
     void shouldRespectExactTokenThresholdBoundary() {
@@ -93,6 +107,10 @@ class RouterServiceTest {
         assertEquals(RouterService.MODEL_PRO, proResponse.modelRouted());
     }
 
+    /**
+     * Verifica que los espacios y tabulaciones iniciales o finales se ignoren mediante {@code trim()}
+     * antes de calcular la estimación de tokens en el límite del umbral.
+     */
     @Test
     @DisplayName("Debe aplicar trim() al estimar tokens en prompts con espacios iniciales y finales en el límite exacto")
     void shouldTrimPromptWhenEstimatingTokensAtBoundary() {
@@ -115,6 +133,13 @@ class RouterServiceTest {
         assertEquals(RouterService.MODEL_PRO, response51.modelRouted());
     }
 
+    /**
+     * Verifica de forma parametrizada que cualquier palabra o frase clave de alta complejidad
+     * fuerce el enrutamiento hacia el modelo avanzado ({@code gemini-2.5-pro}), sin importar
+     * el uso de mayúsculas o minúsculas.
+     *
+     * @param complexPrompt texto de prueba que incluye un término complejo
+     */
     @ParameterizedTest
     @ValueSource(strings = {
         "Necesito revisar la arquitectura del sistema",
@@ -141,6 +166,10 @@ class RouterServiceTest {
         assertEquals(RouterService.MODEL_PRO, response.modelRouted());
     }
 
+    /**
+     * Comprueba la validación de longitud máxima del {@code userId} en su frontera exacta
+     * (255 caracteres permitidos frente a 256 caracteres rechazados).
+     */
     @Test
     @DisplayName("Debe aceptar un userId en el límite exacto de 255 caracteres y rechazar uno de 256 caracteres")
     void shouldValidateExactUserIdLengthBoundary() {
@@ -164,6 +193,9 @@ class RouterServiceTest {
         verify(requestLogRepository, times(1)).save(any(RequestLog.class));
     }
 
+    /**
+     * Verifica la fórmula determinista de estimación de tokens redondeando hacia arriba cada bloque de 4 caracteres.
+     */
     @Test
     @DisplayName("Debe calcular los tokens estimados de forma determinista redondeando hacia arriba")
     void shouldEstimateTokensCorrectly() {
@@ -176,6 +208,10 @@ class RouterServiceTest {
         assertEquals(51, routerService.estimateTokens("a".repeat(201)));
     }
 
+    /**
+     * Verifica que {@link RouterService#estimateTokens(String)} lance {@link InvalidPromptException}
+     * si recibe valores nulos, vacíos o compuestos únicamente por espacios en blanco.
+     */
     @Test
     @DisplayName("Debe lanzar InvalidPromptException al llamar directamente a estimateTokens con null o cadena en blanco")
     void shouldThrowInvalidPromptExceptionWhenEstimateTokensReceivesNullOrBlank() {
@@ -185,6 +221,10 @@ class RouterServiceTest {
         assertThrows(InvalidPromptException.class, () -> routerService.estimateTokens("\t\n\r "));
     }
 
+    /**
+     * Verifica que {@link RouterService#routePrompt(PromptRequest)} rechace peticiones nulas o con campos
+     * inválidos sin llegar a invocar la persistencia en el repositorio.
+     */
     @Test
     @DisplayName("Debe lanzar InvalidPromptException cuando los datos de entrada de routePrompt son inválidos")
     void shouldThrowInvalidPromptExceptionWhenInputIsInvalid() {
@@ -201,6 +241,10 @@ class RouterServiceTest {
         verify(requestLogRepository, never()).save(any());
     }
 
+    /**
+     * Comprueba que {@link RouterService#getLogs(String)} recupere todos los registros cuando
+     * {@code userId} es nulo o en blanco, y filtre por usuario aplicando {@code trim()} cuando se especifica.
+     */
     @Test
     @DisplayName("Debe consultar todos los logs cuando userId es nulo o en blanco, y filtrar cuando tiene valor")
     void shouldGetLogsAllOrFilteredByUserId() {

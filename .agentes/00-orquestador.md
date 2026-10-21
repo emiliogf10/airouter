@@ -44,8 +44,9 @@ Cada subagente arranca **sin memoria** de esta conversación. Cuando redactes la
 
 ### 4. Verificar (No te fíes de los subagentes)
 - Revisa el código generado. ¿El agente de backend intentó escribir SQL a mano en lugar de usar JPA? Corrígelo.
-- Pide al usuario que ejecute `./mvnw clean test` para confirmar que compila y los tests pasan.
-- Si un agente se salió de su zona, rechaza el cambio y reencarga la tarea.
+- **Verificación estricta de Javadoc:** Comprueba que absolutamente todas las clases, `record`, métodos y atributos relevantes nuevos incluyan su **Javadoc completo en español** (`@param`, `@return`, `@throws`), pensando en que servirá de base para el Manual del Programador.
+- Pide al usuario (o verifica mediante subagente) que ejecute `./mvnw clean test` para confirmar que compila y los tests pasan.
+- Si un agente se salió de su zona o entregó código sin Javadoc en español, rechaza el cambio y reencarga la tarea.
 
 ### 5. Auditorías de Seguridad (DevSecOps)
 Si el usuario solicita una auditoría de seguridad integral, coordina el uso del repositorio `security-audit-skill` (Cloudflare). Encarga a `04-auditor-seguridad` que actúe como cazador de vulnerabilidades y a `03-qa-tester` que valide los hallazgos en un entorno aislado. Los reportes de auditoría van fuera de la carpeta de código fuente.

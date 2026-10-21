@@ -222,9 +222,23 @@ public class RateLimitingFilter extends OncePerRequestFilter {
      * Estructura interna que representa la ventana de tiempo activa y el contador atómico de un cliente.
      */
     private static final class RateLimitBucket {
+
+        /**
+         * Marca de tiempo en milisegundos en la que comenzó la ventana actual de 60 segundos.
+         */
         private final long windowStartMillis;
+
+        /**
+         * Contador atómico de peticiones consumidas por el cliente dentro de la ventana actual.
+         */
         private final AtomicInteger requestCount;
 
+        /**
+         * Crea una nueva ventana de control de cuota para un cliente.
+         *
+         * @param windowStartMillis instante de inicio de la ventana en milisegundos
+         * @param requestCount      contador atómico inicializado para la ventana
+         */
         private RateLimitBucket(long windowStartMillis, AtomicInteger requestCount) {
             this.windowStartMillis = windowStartMillis;
             this.requestCount = requestCount;

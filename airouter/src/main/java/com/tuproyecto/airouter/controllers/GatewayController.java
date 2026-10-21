@@ -27,6 +27,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class GatewayController {
 
+    /**
+     * Servicio de negocio encargado de la evaluación de complejidad, estimación de tokens y enrutamiento.
+     */
     private final RouterService routerService;
 
     /**
