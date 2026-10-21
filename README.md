@@ -40,13 +40,16 @@
 │   └── pom.xml
 ├── frontend/                   # Aplicación React 19 + Vite + Tailwind CSS v4 (Dashboard)
 │   ├── src/
-│   │   ├── components/         # Header (con selector EUR/USD), StatsCards, PromptPlayground, etc.
+│   │   ├── components/         # Header, MetricCard, StatsCards, PromptPlayground, RecentLogsTable...
 │   │   ├── services/           # Cliente HTTP tipado hacia /api/v1/router
 │   │   ├── types/              # Contratos TypeScript alineados con los DTOs de Java
 │   │   ├── utils/              # Conversión y formateo de divisa (EUR € / USD $)
 │   │   └── test/               # Suite de pruebas unitarias y de integración (Vitest)
 │   ├── package.json
 │   └── vite.config.ts
+├── docs/                       # Documentación oficial del proyecto
+│   ├── MANUAL_DE_USUARIO.md    # Guía funcional paso a paso del Dashboard y simulador
+│   └── MANUAL_DEL_PROGRAMADOR.md # Arquitectura técnica, modelo de datos, seguridad y costes
 ├── GEMINI.md                   # Contexto global, reglas arquitectónicas y ADRs
 └── PLAN_DE_ACCION.md           # Backlog priorizado e historial de cambios
 ```
