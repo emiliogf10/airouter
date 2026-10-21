@@ -11,7 +11,7 @@
   * **Desarrollo / Tests:** H2 Database (en memoria).
   * **Producción (Objetivo):** PostgreSQL.
   * **Control de Esquema:** **Flyway** (`spring-boot-starter-flyway` + `flyway-core`) con validación estricta en Hibernate (`spring.jpa.hibernate.ddl-auto=validate`).
-* **Frontend (Planificado):** React 19, Vite, TypeScript, Tailwind CSS v4.
+* **Frontend:** React 19, Vite, TypeScript, Tailwind CSS v4, Recharts, Lucide React, Vitest + Testing Library.
 
 ---
 
@@ -29,7 +29,8 @@
 ├── airouter/                   # Proyecto Maven / Spring Boot (Backend)
 │   ├── src/main/java/com/tuproyecto/airouter/
 │   │   ├── clients/            # Clientes HTTP hacia proveedores de IA (OpenAI, Gemini...)
-│   │   ├── controllers/        # Endpoints REST (/api/v1/...)
+│   │   ├── config/             # Configuración de seguridad, CORS y filtro Rate Limiting
+│   │   ├── controllers/        # Endpoints REST (/api/v1/...) y manejo global de errores
 │   │   ├── models/             # Entidades JPA (entities/) y DTOs (dto/)
 │   │   ├── repositories/       # Repositorios Spring Data JPA
 │   │   └── services/           # Lógica de negocio, estimación de tokens y enrutamiento
@@ -37,6 +38,15 @@
 │   │   ├── db/migration/       # Scripts SQL versionados de Flyway (V1__..., V2__...)
 │   │   └── application.properties
 │   └── pom.xml
+├── frontend/                   # Aplicación React 19 + Vite + Tailwind CSS v4 (Dashboard)
+│   ├── src/
+│   │   ├── components/         # Header (con selector EUR/USD), StatsCards, PromptPlayground, etc.
+│   │   ├── services/           # Cliente HTTP tipado hacia /api/v1/router
+│   │   ├── types/              # Contratos TypeScript alineados con los DTOs de Java
+│   │   ├── utils/              # Conversión y formateo de divisa (EUR € / USD $)
+│   │   └── test/               # Suite de pruebas unitarias y de integración (Vitest)
+│   ├── package.json
+│   └── vite.config.ts
 ├── GEMINI.md                   # Contexto global, reglas arquitectónicas y ADRs
 └── PLAN_DE_ACCION.md           # Backlog priorizado e historial de cambios
 ```
@@ -147,3 +157,21 @@ cd airouter
 ./mvnw spring-boot:run
 ```
 *(En Windows PowerShell: `.\mvnw.cmd spring-boot:run`)*
+
+### 3. Ejecutar el Dashboard Frontend en local (Puerto `:5173`)
+El Frontend incluye un selector interactivo de divisa en la cabecera (**`EUR €` por defecto** con conversión `1 USD = 0.92 EUR`, o **`USD $`** para consultar las tarifas nativas de los proveedores de IA), simulador de enrutamiento de prompts, tarjetas KPI, gráficas de distribución y tabla de historial en tiempo real.
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### 4. Ejecutar tests y validación estática del Frontend
+```bash
+cd frontend
+npm test
+npm run lint
+npm run build
+```
+
