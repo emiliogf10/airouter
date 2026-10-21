@@ -2,6 +2,7 @@ package com.tuproyecto.airouter.controllers;
 
 import com.tuproyecto.airouter.models.dto.PromptRequest;
 import com.tuproyecto.airouter.models.dto.RouterResponse;
+import com.tuproyecto.airouter.models.dto.RouterStatsResponse;
 import com.tuproyecto.airouter.services.RouterService;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -16,7 +17,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * Controlador REST principal que actúa como pasarela (Gateway) para el enrutamiento
- * inteligente de prompts y la consulta del historial de peticiones evaluadas.
+ * inteligente de prompts, la consulta del historial de peticiones evaluadas y el cálculo
+ * de métricas de ahorro de costes.
  *
  * <p>Expone los endpoints bajo la ruta base {@code /api/v1/router} y devuelve los DTOs
  * directamente junto con {@link ResponseStatus}, prescindiendo del uso de {@code ResponseEntity}
@@ -58,5 +60,20 @@ public class GatewayController {
     @ResponseStatus(HttpStatus.OK)
     public List<RouterResponse> getLogs(@RequestParam(required = false) String userId) {
         return routerService.getLogs(userId);
+    }
+
+    /**
+     * Recupera las métricas agregadas de tráfico, consumo de tokens y ahorro económico estimado en USD.
+     *
+     * <p>Si se proporciona el parámetro opcional {@code userId}, calcula las estadísticas únicamente
+     * para las peticiones de dicho usuario; en caso contrario, calcula las métricas globales del sistema.</p>
+     *
+     * @param userId identificador opcional del usuario para filtrar las estadísticas
+     * @return DTO {@link RouterStatsResponse} con el desglose de peticiones, tokens, costes y porcentaje de ahorro
+     */
+    @GetMapping("/stats")
+    @ResponseStatus(HttpStatus.OK)
+    public RouterStatsResponse getStats(@RequestParam(required = false) String userId) {
+        return routerService.getStats(userId);
     }
 }

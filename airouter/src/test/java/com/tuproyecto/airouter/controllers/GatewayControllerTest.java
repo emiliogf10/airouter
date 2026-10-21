@@ -24,9 +24,10 @@ import org.springframework.web.context.WebApplicationContext;
 /**
  * Pruebas de integración extremo a extremo para {@link GatewayController} y {@link com.tuproyecto.airouter.exceptions.GlobalExceptionHandler}.
  *
- * <p>Verifica el comportamiento HTTP de los endpoints {@code POST /api/v1/router/prompt} y
- * {@code GET /api/v1/router/logs}, el formato de errores {@code ErrorResponse} ante entradas inválidas
- * y la persistencia real en la base de datos H2 gestionada por Flyway.</p>
+ * <p>Verifica el comportamiento HTTP de los endpoints {@code POST /api/v1/router/prompt},
+ * {@code GET /api/v1/router/logs} y {@code GET /api/v1/router/stats}, el formato de errores
+ * {@code ErrorResponse} ante entradas inválidas y la persistencia real en la base de datos H2
+ * gestionada por Flyway.</p>
  */
 @SpringBootTest
 class GatewayControllerTest {
@@ -177,6 +178,81 @@ class GatewayControllerTest {
                 .andExpect(jsonPath("$", hasSize(2)))
                 .andExpect(jsonPath("$[0].promptContent", is("Segundo prompt de Alice")))
                 .andExpect(jsonPath("$[1].promptContent", is("Primer prompt de Alice")));
+    }
+
+    /**
+     * Verifica de extremo a extremo el endpoint {@code GET /api/v1/router/stats} con H2:
+     * primero comprueba que en estado vacío devuelve todos los contadores a 0, y luego tras
+     * procesar peticiones para distintos usuarios verifica las métricas globales y filtradas por {@code userId}.
+     *
+     * @throws Exception si ocurre un error durante la petición simulada
+     */
+    @Test
+    @DisplayName("GET /api/v1/router/stats debe devolver métricas a cero en estado vacío y calcular ahorros globales y por usuario tras enrutar")
+    void shouldReturnEmptyStatsInitiallyAndAccurateStatsAfterRouting() throws Exception {
+        // 1. Base de datos vacía -> todos los contadores a 0
+        mockMvc.perform(get("/api/v1/router/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalRequests", is(0)))
+                .andExpect(jsonPath("$.totalTokensEstimated", is(0)))
+                .andExpect(jsonPath("$.fastModelRequests", is(0)))
+                .andExpect(jsonPath("$.proModelRequests", is(0)))
+                .andExpect(jsonPath("$.fastModelTokens", is(0)))
+                .andExpect(jsonPath("$.proModelTokens", is(0)))
+                .andExpect(jsonPath("$.estimatedActualCostUsd", is(0.0)))
+                .andExpect(jsonPath("$.estimatedBaselineProCostUsd", is(0.0)))
+                .andExpect(jsonPath("$.estimatedSavingsUsd", is(0.0)))
+                .andExpect(jsonPath("$.savingsPercentage", is(0.0)));
+
+        // 2. Enviar petición corta de "alice" (16 caracteres = 4 tokens -> gemini-2.5-flash)
+        String aliceFastPayload = """
+                {
+                    "userId": "alice",
+                    "prompt": "1234567890123456"
+                }
+                """;
+        // 3. Enviar petición compleja de "bob" (16 caracteres con "optimizar" = 4 tokens -> gemini-2.5-pro)
+        String bobProPayload = """
+                {
+                    "userId": "bob",
+                    "prompt": "Quiero optimizar"
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/router/prompt")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(aliceFastPayload))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/v1/router/prompt")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(bobProPayload))
+                .andExpect(status().isOk());
+
+        // 4. Estadísticas globales: 2 peticiones, 8 tokens (4 flash + 4 pro) -> 44.0% de ahorro
+        mockMvc.perform(get("/api/v1/router/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalRequests", is(2)))
+                .andExpect(jsonPath("$.totalTokensEstimated", is(8)))
+                .andExpect(jsonPath("$.fastModelRequests", is(1)))
+                .andExpect(jsonPath("$.proModelRequests", is(1)))
+                .andExpect(jsonPath("$.fastModelTokens", is(4)))
+                .andExpect(jsonPath("$.proModelTokens", is(4)))
+                .andExpect(jsonPath("$.estimatedActualCostUsd", is(0.000006)))
+                .andExpect(jsonPath("$.estimatedBaselineProCostUsd", is(0.00001)))
+                .andExpect(jsonPath("$.estimatedSavingsUsd", is(0.000004)))
+                .andExpect(jsonPath("$.savingsPercentage", is(44.0)));
+
+        // 5. Estadísticas filtradas para "alice": 1 petición flash (4 tokens) -> 88.0% de ahorro
+        mockMvc.perform(get("/api/v1/router/stats").param("userId", "alice"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalRequests", is(1)))
+                .andExpect(jsonPath("$.totalTokensEstimated", is(4)))
+                .andExpect(jsonPath("$.fastModelRequests", is(1)))
+                .andExpect(jsonPath("$.proModelRequests", is(0)))
+                .andExpect(jsonPath("$.fastModelTokens", is(4)))
+                .andExpect(jsonPath("$.proModelTokens", is(0)))
+                .andExpect(jsonPath("$.savingsPercentage", is(88.0)));
     }
 
     /**

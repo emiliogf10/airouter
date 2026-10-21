@@ -3,8 +3,11 @@ package com.tuproyecto.airouter.services;
 import com.tuproyecto.airouter.exceptions.InvalidPromptException;
 import com.tuproyecto.airouter.models.dto.PromptRequest;
 import com.tuproyecto.airouter.models.dto.RouterResponse;
+import com.tuproyecto.airouter.models.dto.RouterStatsResponse;
 import com.tuproyecto.airouter.models.entities.RequestLog;
 import com.tuproyecto.airouter.repositories.RequestLogRepository;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
@@ -15,8 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Servicio de negocio encargado de evaluar la complejidad de los prompts entrantes,
- * estimar el consumo de tokens, decidir el modelo LLM óptimo en coste/rendimiento
- * y registrar el historial de peticiones.
+ * estimar el consumo de tokens, decidir el modelo LLM óptimo en coste/rendimiento,
+ * calcular las métricas financieras de ahorro y registrar el historial de peticiones.
  */
 @Service
 @RequiredArgsConstructor
@@ -43,6 +46,43 @@ public class RouterService {
      * Longitud máxima permitida para el identificador de usuario según el esquema de base de datos.
      */
     public static final int MAX_USER_ID_LENGTH = 255;
+
+    /**
+     * Tarifa de referencia en dólares estadounidenses (USD) por cada millón de tokens
+     * procesados por el modelo económico ({@link #MODEL_FAST}).
+     */
+    public static final BigDecimal COST_PER_MILLION_TOKENS_FAST = new BigDecimal("0.15");
+
+    /**
+     * Tarifa de referencia en dólares estadounidenses (USD) por cada millón de tokens
+     * procesados por el modelo avanzado ({@link #MODEL_PRO}).
+     */
+    public static final BigDecimal COST_PER_MILLION_TOKENS_PRO = new BigDecimal("1.25");
+
+    /**
+     * Factor divisor equivalente a un millón de tokens para el cálculo de tarifas unitarias.
+     */
+    private static final BigDecimal ONE_MILLION_TOKENS = new BigDecimal("1000000");
+
+    /**
+     * Factor multiplicador para expresar proporciones como porcentaje sobre 100.
+     */
+    private static final BigDecimal ONE_HUNDRED = new BigDecimal("100");
+
+    /**
+     * Escala decimal estándar empleada para expresar importes monetarios de tokens en USD.
+     */
+    private static final int COST_DECIMAL_SCALE = 6;
+
+    /**
+     * Escala decimal intermedia de alta precisión para divisiones financieras antes del redondeo final.
+     */
+    private static final int INTERNAL_CALCULATION_SCALE = 12;
+
+    /**
+     * Escala decimal empleada para redondear el porcentaje de ahorro económico.
+     */
+    private static final int PERCENTAGE_DECIMAL_SCALE = 2;
 
     /**
      * Factor medio de caracteres por token empleado en la heurística determinista de estimación.
@@ -110,16 +150,100 @@ public class RouterService {
      */
     @Transactional(readOnly = true)
     public List<RouterResponse> getLogs(String userId) {
-        List<RequestLog> logs;
-        if (userId == null || userId.isBlank()) {
-            logs = requestLogRepository.findAllByOrderByCreatedAtDesc();
-        } else {
-            logs = requestLogRepository.findByUserIdOrderByCreatedAtDesc(userId.trim());
-        }
-
+        List<RequestLog> logs = fetchLogsByOptionalUserId(userId);
         return logs.stream()
                 .map(this::toRouterResponse)
                 .toList();
+    }
+
+    /**
+     * Calcula las estadísticas agregadas de tráfico, consumo de tokens y ahorro financiero en USD,
+     * permitiendo filtrar opcionalmente por un usuario concreto.
+     *
+     * <p>El ahorro económico se obtiene comparando el coste real estimado (según el modelo asignado
+     * a cada petición: {@link #COST_PER_MILLION_TOKENS_FAST} para {@link #MODEL_FAST} y
+     * {@link #COST_PER_MILLION_TOKENS_PRO} para {@link #MODEL_PRO}) frente al coste base hipotético
+     * que habría supuesto procesar la totalidad de los tokens en el modelo avanzado {@link #MODEL_PRO}.</p>
+     *
+     * @param userId identificador opcional del usuario para acotar las métricas (nulo o en blanco para métricas globales)
+     * @return DTO {@link RouterStatsResponse} con los totales de peticiones, tokens, costes en USD y porcentaje de ahorro
+     */
+    @Transactional(readOnly = true)
+    public RouterStatsResponse getStats(String userId) {
+        List<RequestLog> logs = fetchLogsByOptionalUserId(userId);
+
+        long totalRequests = logs.size();
+        long fastModelRequests = 0L;
+        long proModelRequests = 0L;
+        long fastModelTokens = 0L;
+        long proModelTokens = 0L;
+
+        for (RequestLog logEntry : logs) {
+            long tokens = logEntry.getTokensEstimated() != null ? logEntry.getTokensEstimated() : 0L;
+            if (MODEL_FAST.equals(logEntry.getModelRouted())) {
+                fastModelRequests++;
+                fastModelTokens += tokens;
+            } else if (MODEL_PRO.equals(logEntry.getModelRouted())) {
+                proModelRequests++;
+                proModelTokens += tokens;
+            }
+        }
+
+        long totalTokensEstimated = fastModelTokens + proModelTokens;
+
+        BigDecimal rawFastCost = BigDecimal.valueOf(fastModelTokens)
+                .multiply(COST_PER_MILLION_TOKENS_FAST)
+                .divide(ONE_MILLION_TOKENS, INTERNAL_CALCULATION_SCALE, RoundingMode.HALF_UP);
+        BigDecimal rawProCost = BigDecimal.valueOf(proModelTokens)
+                .multiply(COST_PER_MILLION_TOKENS_PRO)
+                .divide(ONE_MILLION_TOKENS, INTERNAL_CALCULATION_SCALE, RoundingMode.HALF_UP);
+
+        BigDecimal rawActualCost = rawFastCost.add(rawProCost);
+        BigDecimal rawBaselineProCost = BigDecimal.valueOf(totalTokensEstimated)
+                .multiply(COST_PER_MILLION_TOKENS_PRO)
+                .divide(ONE_MILLION_TOKENS, INTERNAL_CALCULATION_SCALE, RoundingMode.HALF_UP);
+
+        BigDecimal estimatedActualCostUsd = rawActualCost.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+        BigDecimal estimatedBaselineProCostUsd = rawBaselineProCost.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+        BigDecimal estimatedSavingsUsd = estimatedBaselineProCostUsd
+                .subtract(estimatedActualCostUsd)
+                .setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+
+        double savingsPercentage = 0.0;
+        if (totalTokensEstimated > 0 && estimatedBaselineProCostUsd.compareTo(BigDecimal.ZERO) > 0) {
+            savingsPercentage = rawBaselineProCost.subtract(rawActualCost)
+                    .divide(rawBaselineProCost, INTERNAL_CALCULATION_SCALE, RoundingMode.HALF_UP)
+                    .multiply(ONE_HUNDRED)
+                    .setScale(PERCENTAGE_DECIMAL_SCALE, RoundingMode.HALF_UP)
+                    .doubleValue();
+        }
+
+        return new RouterStatsResponse(
+                totalRequests,
+                totalTokensEstimated,
+                fastModelRequests,
+                proModelRequests,
+                fastModelTokens,
+                proModelTokens,
+                estimatedActualCostUsd,
+                estimatedBaselineProCostUsd,
+                estimatedSavingsUsd,
+                savingsPercentage
+        );
+    }
+
+    /**
+     * Recupera la lista de registros {@link RequestLog} desde el repositorio aplicando el filtro
+     * opcional por usuario si {@code userId} contiene caracteres distintos de espacio en blanco.
+     *
+     * @param userId identificador opcional del usuario
+     * @return lista de entidades {@link RequestLog} ordenadas por fecha de creación descendente
+     */
+    private List<RequestLog> fetchLogsByOptionalUserId(String userId) {
+        if (userId == null || userId.isBlank()) {
+            return requestLogRepository.findAllByOrderByCreatedAtDesc();
+        }
+        return requestLogRepository.findByUserIdOrderByCreatedAtDesc(userId.trim());
     }
 
     /**
