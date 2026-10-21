@@ -95,6 +95,27 @@ Devuelve la lista de peticiones evaluadas ordenadas de más reciente a más anti
 * **Global:** `GET /api/v1/router/logs`
 * **Filtrado por usuario:** `GET /api/v1/router/logs?userId=demo-user`
 
+### 3. Consultar Métricas de Tráfico y Ahorro Económico (`GET /api/v1/router/stats`)
+Calcula y devuelve las estadísticas agregadas de uso de tokens, distribución de peticiones entre modelos (`gemini-2.5-flash` a $0.15/1M tokens vs `gemini-2.5-pro` a $1.25/1M tokens) y el ahorro económico estimado en USD frente a haber procesado todo con el modelo Pro.
+* **Global:** `GET /api/v1/router/stats`
+* **Filtrado por usuario:** `GET /api/v1/router/stats?userId=demo-user`
+
+**Ejemplo de Respuesta (`200 OK`):**
+```json
+{
+  "totalRequests": 2,
+  "totalTokensEstimated": 1000000,
+  "fastModelRequests": 1,
+  "proModelRequests": 1,
+  "fastModelTokens": 500000,
+  "proModelTokens": 500000,
+  "estimatedActualCostUsd": 0.700000,
+  "estimatedBaselineProCostUsd": 1.250000,
+  "estimatedSavingsUsd": 0.550000,
+  "savingsPercentage": 44.0
+}
+```
+
 ---
 
 ## 🛡️ Seguridad, Rate Limiting y CORS

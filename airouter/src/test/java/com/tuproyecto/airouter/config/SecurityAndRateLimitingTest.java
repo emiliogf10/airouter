@@ -39,30 +39,30 @@ import org.springframework.web.context.WebApplicationContext;
 class SecurityAndRateLimitingTest {
 
     /**
-     * Contexto web de la aplicación para configurar {@link MockMvc}.
+     * Contexto web de la aplicación Spring para configurar {@link MockMvc}.
      */
     @Autowired
     private WebApplicationContext webApplicationContext;
 
     /**
-     * Filtro de control de tasa de peticiones inyectado para registrar en {@link MockMvc} y limpiar su estado.
+     * Filtro de control de tasa bajo prueba.
      */
     @Autowired
     private RateLimitingFilter rateLimitingFilter;
 
     /**
-     * Repositorio JPA de logs utilizado para verificar que las peticiones bloqueadas no se persisten.
+     * Repositorio JPA de logs utilizado para verificar que las peticiones bloqueadas no se persistan.
      */
     @Autowired
     private RequestLogRepository requestLogRepository;
 
     /**
-     * Cliente de pruebas MVC con el filtro {@link RateLimitingFilter} registrado.
+     * Instancia de {@link MockMvc} con el filtro de rate limiting registrado.
      */
     private MockMvc mockMvc;
 
     /**
-     * Cuerpo JSON válido reutilizado en las pruebas de control de cuota.
+     * Carga útil JSON válida utilizada en las peticiones de prueba.
      */
     private static final String VALID_PAYLOAD = """
             {
@@ -72,7 +72,7 @@ class SecurityAndRateLimitingTest {
             """;
 
     /**
-     * Limpia los buckets de rate limiting y la base de datos H2 antes de cada test.
+     * Reinicia los contadores de cuota en memoria, limpia la base de datos H2 y construye {@link MockMvc}.
      */
     @BeforeEach
     void setUp() {
@@ -84,11 +84,10 @@ class SecurityAndRateLimitingTest {
     }
 
     /**
-     * Verifica que el filtro permita exactamente {@code N} peticiones por minuto, bloquee la petición
-     * {@code N+1} con estado HTTP 429, incluya la cabecera {@code Retry-After} con un valor entre 1 y 60
-     * segundos, y evite que la petición bloqueada se guarde en la base de datos.
+     * Verifica que el filtro permita hasta {@code N} peticiones por minuto y bloquee la petición {@code N+1}
+     * con estado HTTP 429, cabecera {@code Retry-After} entre 1 y 60 segundos, y sin persistir en base de datos.
      *
-     * @throws Exception si ocurre un error durante la ejecución de MockMvc
+     * @throws Exception si ocurre un error durante la ejecución de la prueba MVC
      */
     @Test
     @DisplayName("RateLimitingFilter debe permitir N peticiones, bloquear la N+1 con HTTP 429, Retry-After (1..60s) y evitar persistencia en BD")
@@ -123,10 +122,10 @@ class SecurityAndRateLimitingTest {
     }
 
     /**
-     * Comprueba que el agotamiento de cuota de un cliente (por {@code X-API-Key} o por dirección IP)
-     * no afecte a otros clientes con claves o direcciones IP diferentes.
+     * Comprueba que los contadores de cuota estén aislados independientemente para cada {@code X-API-Key}
+     * y para cada dirección IP de origen.
      *
-     * @throws Exception si ocurre un error durante la ejecución de MockMvc
+     * @throws Exception si ocurre un error durante la ejecución de la prueba MVC
      */
     @Test
     @DisplayName("RateLimitingFilter debe aislar contadores entre distintas X-API-Key y distintas direcciones IP")
@@ -188,10 +187,10 @@ class SecurityAndRateLimitingTest {
     }
 
     /**
-     * Verifica que si se envía una cabecera {@code X-API-Key} vacía o con solo espacios/tabulaciones,
-     * el filtro la descarte y aplique el límite de cuota por dirección IP.
+     * Verifica que si un cliente envía una cabecera {@code X-API-Key} vacía o compuesta solo por espacios,
+     * el filtro recurra al identificador por dirección IP e impida evadir el límite de peticiones.
      *
-     * @throws Exception si ocurre un error durante la ejecución de MockMvc
+     * @throws Exception si ocurre un error durante la ejecución de la prueba MVC
      */
     @Test
     @DisplayName("RateLimitingFilter debe ignorar X-API-Key en blanco o con solo espacios y aplicar el límite por dirección IP")
@@ -239,10 +238,10 @@ class SecurityAndRateLimitingTest {
     }
 
     /**
-     * Verifica que el filtro normalice mediante {@code trim()} el valor de {@code X-API-Key} para impedir
-     * que un cliente multiplique su cuota añadiendo espacios al principio o al final de la clave.
+     * Verifica que el filtro normalice mediante {@code trim()} el valor de {@code X-API-Key} para que
+     * añadir espacios al inicio o al final no cree buckets distintos ni permita duplicar la cuota.
      *
-     * @throws Exception si ocurre un error durante la ejecución de MockMvc
+     * @throws Exception si ocurre un error durante la ejecución de la prueba MVC
      */
     @Test
     @DisplayName("RateLimitingFilter debe normalizar con trim() la cabecera X-API-Key para impedir evasión de cuota con espacios laterales")
@@ -274,18 +273,25 @@ class SecurityAndRateLimitingTest {
     }
 
     /**
-     * Comprueba que las consultas {@code GET /api/v1/router/logs} y las peticiones preflight {@code OPTIONS}
-     * estén excluidas del filtro de rate limiting y no consuman cuota.
+     * Verifica que los endpoints de lectura ({@code GET /api/v1/router/logs} y {@code GET /api/v1/router/stats})
+     * así como las peticiones preflight CORS ({@code OPTIONS}) no consuman cuota del filtro de rate limiting
+     * y soporten CORS desde el origen autorizado.
      *
-     * @throws Exception si ocurre un error durante la ejecución de MockMvc
+     * @throws Exception si ocurre un error durante la ejecución de la prueba MVC
      */
     @Test
-    @DisplayName("RateLimitingFilter no debe consumir cuota en GET /api/v1/router/logs ni en preflight OPTIONS")
-    void shouldNotFilterGetLogsOrOptionsPreflight() throws Exception {
+    @DisplayName("RateLimitingFilter no debe consumir cuota en GET /logs, GET /stats ni en preflight OPTIONS")
+    void shouldNotFilterGetLogsGetStatsOrOptionsPreflight() throws Exception {
         for (int i = 0; i < 5; i++) {
             mockMvc.perform(get("/api/v1/router/logs")
                             .header("X-API-Key", "sk-unfiltered-key"))
                     .andExpect(status().isOk());
+
+            mockMvc.perform(get("/api/v1/router/stats")
+                            .header("X-API-Key", "sk-unfiltered-key")
+                            .header(HttpHeaders.ORIGIN, "http://localhost:5173"))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "http://localhost:5173"));
 
             mockMvc.perform(options("/api/v1/router/prompt")
                             .header(HttpHeaders.ORIGIN, "http://localhost:5173")
@@ -295,8 +301,8 @@ class SecurityAndRateLimitingTest {
     }
 
     /**
-     * Verifica que {@link RateLimitingFilter#maskClientKeyForAudit(String)} oculte siempre los caracteres
-     * sensibles de cualquier {@code X-API-Key} antes de escribir en los logs de auditoría.
+     * Comprueba que {@link RateLimitingFilter#maskClientKeyForAudit(String)} oculte siempre los secretos
+     * de {@code X-API-Key} dejando como máximo los 3 primeros caracteres seguidos de {@code ***}.
      */
     @Test
     @DisplayName("RateLimitingFilter.maskClientKeyForAudit nunca debe exponer el valor completo de X-API-Key")
@@ -319,10 +325,10 @@ class SecurityAndRateLimitingTest {
     }
 
     /**
-     * Comprueba que {@link SecurityConfig} autorice peticiones CORS desde el origen permitido
-     * ({@code http://localhost:5173}) exponiendo {@code Retry-After} y rechace orígenes externos con HTTP 403.
+     * Verifica que {@link SecurityConfig} autorice peticiones CORS desde {@code http://localhost:5173}
+     * exponiendo la cabecera {@code Retry-After} y rechace orígenes externos no autorizados.
      *
-     * @throws Exception si ocurre un error durante la ejecución de MockMvc
+     * @throws Exception si ocurre un error durante la ejecución de la prueba MVC
      */
     @Test
     @DisplayName("SecurityConfig debe autorizar CORS para http://localhost:5173 exponiendo Retry-After y rechazar orígenes no autorizados")
@@ -343,10 +349,10 @@ class SecurityAndRateLimitingTest {
     }
 
     /**
-     * Verifica que {@link SecurityConfig} rechace con HTTP 403 Forbidden cualquier petición preflight CORS
-     * que solicite métodos HTTP no permitidos ({@code DELETE}, {@code PUT}) o cabeceras no autorizadas.
+     * Verifica que {@link SecurityConfig} rechace peticiones preflight CORS que soliciten métodos HTTP
+     * destructivos ({@code DELETE}, {@code PUT}) o cabeceras personalizadas no incluidas en la lista blanca.
      *
-     * @throws Exception si ocurre un error durante la ejecución de MockMvc
+     * @throws Exception si ocurre un error durante la ejecución de la prueba MVC
      */
     @Test
     @DisplayName("SecurityConfig debe rechazar preflights CORS que soliciten métodos HTTP destructivos no permitidos (DELETE, PUT) o cabeceras no autorizadas")

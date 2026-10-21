@@ -13,9 +13,12 @@ import static org.mockito.Mockito.when;
 import com.tuproyecto.airouter.exceptions.InvalidPromptException;
 import com.tuproyecto.airouter.models.dto.PromptRequest;
 import com.tuproyecto.airouter.models.dto.RouterResponse;
+import com.tuproyecto.airouter.models.dto.RouterStatsResponse;
 import com.tuproyecto.airouter.models.entities.RequestLog;
 import com.tuproyecto.airouter.repositories.RequestLogRepository;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -31,7 +34,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 /**
  * Pruebas unitarias exhaustivas para {@link RouterService} verificando la lógica de estimación
  * de tokens, casos borde de umbrales de enrutamiento, palabras clave complejas, validaciones
- * de dominio y persistencia en el repositorio.
+ * de dominio, cálculo de estadísticas de ahorro y persistencia en el repositorio.
  */
 @ExtendWith(MockitoExtension.class)
 class RouterServiceTest {
@@ -272,5 +275,143 @@ class RouterServiceTest {
         assertEquals(1, userLogs.size());
         assertEquals("user-1", userLogs.getFirst().userId());
         verify(requestLogRepository).findByUserIdOrderByCreatedAtDesc("user-1");
+    }
+
+    /**
+     * Verifica el cálculo de estadísticas financieras de ahorro ({@link RouterService#getStats(String)})
+     * en un escenario con tráfico mixto al 50% entre el modelo rápido y el avanzado.
+     */
+    @Test
+    @DisplayName("Debe calcular correctamente las métricas de tokens, costes en USD y porcentaje de ahorro en tráfico mixto")
+    void shouldCalculateStatsAndCostSavingsCorrectly() {
+        RequestLog fastLog = RequestLog.builder()
+                .id(UUID.randomUUID())
+                .userId("user-stats")
+                .promptContent("Prompt rápido")
+                .modelRouted(RouterService.MODEL_FAST)
+                .tokensEstimated(500_000)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        RequestLog proLog = RequestLog.builder()
+                .id(UUID.randomUUID())
+                .userId("user-stats")
+                .promptContent("Prompt pro")
+                .modelRouted(RouterService.MODEL_PRO)
+                .tokensEstimated(500_000)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        when(requestLogRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(fastLog, proLog));
+
+        RouterStatsResponse stats = routerService.getStats(null);
+
+        assertEquals(2L, stats.totalRequests());
+        assertEquals(1_000_000L, stats.totalTokensEstimated());
+        assertEquals(1L, stats.fastModelRequests());
+        assertEquals(1L, stats.proModelRequests());
+        assertEquals(500_000L, stats.fastModelTokens());
+        assertEquals(500_000L, stats.proModelTokens());
+        // Coste real: (500_000 * 0.15 / 1_000_000) + (500_000 * 1.25 / 1_000_000) = 0.075 + 0.625 = 0.700000
+        assertEquals(new BigDecimal("0.700000"), stats.estimatedActualCostUsd());
+        // Coste base Pro: 1_000_000 * 1.25 / 1_000_000 = 1.250000
+        assertEquals(new BigDecimal("1.250000"), stats.estimatedBaselineProCostUsd());
+        // Ahorro: 1.250000 - 0.700000 = 0.550000
+        assertEquals(new BigDecimal("0.550000"), stats.estimatedSavingsUsd());
+        // Porcentaje de ahorro: (0.55 / 1.25) * 100 = 44.0%
+        assertEquals(44.0, stats.savingsPercentage());
+    }
+
+    /**
+     * Verifica que cuando no existen peticiones registradas en la base de datos (estado vacío),
+     * {@link RouterService#getStats(String)} devuelva todos los contadores en cero, importes
+     * en {@code 0.000000} y porcentaje de ahorro en {@code 0.0} sin provocar división por cero.
+     */
+    @Test
+    @DisplayName("Debe devolver todos los contadores y costes a cero sin ArithmeticException cuando no hay peticiones")
+    void shouldReturnZeroStatsWhenNoLogsExist() {
+        when(requestLogRepository.findAllByOrderByCreatedAtDesc()).thenReturn(Collections.emptyList());
+
+        RouterStatsResponse emptyStats = routerService.getStats("   ");
+
+        assertEquals(0L, emptyStats.totalRequests());
+        assertEquals(0L, emptyStats.totalTokensEstimated());
+        assertEquals(0L, emptyStats.fastModelRequests());
+        assertEquals(0L, emptyStats.proModelRequests());
+        assertEquals(0L, emptyStats.fastModelTokens());
+        assertEquals(0L, emptyStats.proModelTokens());
+        assertEquals(new BigDecimal("0.000000"), emptyStats.estimatedActualCostUsd());
+        assertEquals(new BigDecimal("0.000000"), emptyStats.estimatedBaselineProCostUsd());
+        assertEquals(new BigDecimal("0.000000"), emptyStats.estimatedSavingsUsd());
+        assertEquals(0.0, emptyStats.savingsPercentage());
+    }
+
+    /**
+     * Verifica que cuando el 100% del tráfico se enruta al modelo económico ({@code gemini-2.5-flash}),
+     * el porcentaje de ahorro sea exactamente del {@code 88.0%}, incluso para una única petición
+     * corta de pocos tokens (1 token o 5 tokens).
+     */
+    @Test
+    @DisplayName("Debe calcular exactamente un 88.0% de ahorro cuando el 100% del tráfico va a gemini-2.5-flash")
+    void shouldReturn88PercentSavingsWhenAllTrafficIsRoutedToFastModel() {
+        RequestLog tinyFastLog = RequestLog.builder()
+                .id(UUID.randomUUID())
+                .userId("user-flash")
+                .promptContent("Hola")
+                .modelRouted(RouterService.MODEL_FAST)
+                .tokensEstimated(1)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        when(requestLogRepository.findByUserIdOrderByCreatedAtDesc("user-flash")).thenReturn(List.of(tinyFastLog));
+
+        RouterStatsResponse stats = routerService.getStats("  user-flash  ");
+
+        assertEquals(1L, stats.totalRequests());
+        assertEquals(1L, stats.totalTokensEstimated());
+        assertEquals(1L, stats.fastModelRequests());
+        assertEquals(0L, stats.proModelRequests());
+        assertEquals(1L, stats.fastModelTokens());
+        assertEquals(0L, stats.proModelTokens());
+        // 1 token en flash: 0.00000015 -> redondeado a 6 decimales = 0.000000
+        assertEquals(new BigDecimal("0.000000"), stats.estimatedActualCostUsd());
+        // 1 token en pro: 0.00000125 -> redondeado a 6 decimales = 0.000001
+        assertEquals(new BigDecimal("0.000001"), stats.estimatedBaselineProCostUsd());
+        assertEquals(new BigDecimal("0.000001"), stats.estimatedSavingsUsd());
+        // Ahorro porcentual exacto: (1.25 - 0.15) / 1.25 * 100 = 88.0%
+        assertEquals(88.0, stats.savingsPercentage());
+        verify(requestLogRepository).findByUserIdOrderByCreatedAtDesc("user-flash");
+    }
+
+    /**
+     * Verifica que cuando el 100% del tráfico se enruta al modelo avanzado ({@code gemini-2.5-pro}),
+     * el ahorro económico sea {@code 0.000000} USD y el porcentaje de ahorro sea {@code 0.0%}.
+     */
+    @Test
+    @DisplayName("Debe devolver 0.000000 USD y 0.0% de ahorro cuando el 100% del tráfico va a gemini-2.5-pro")
+    void shouldReturnZeroSavingsWhenAllTrafficIsRoutedToProModel() {
+        RequestLog proLog = RequestLog.builder()
+                .id(UUID.randomUUID())
+                .userId("user-pro-only")
+                .promptContent("Analizar en profundidad la arquitectura")
+                .modelRouted(RouterService.MODEL_PRO)
+                .tokensEstimated(100_000)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        when(requestLogRepository.findByUserIdOrderByCreatedAtDesc("user-pro-only")).thenReturn(List.of(proLog));
+
+        RouterStatsResponse stats = routerService.getStats("user-pro-only");
+
+        assertEquals(1L, stats.totalRequests());
+        assertEquals(100_000L, stats.totalTokensEstimated());
+        assertEquals(0L, stats.fastModelRequests());
+        assertEquals(1L, stats.proModelRequests());
+        assertEquals(0L, stats.fastModelTokens());
+        assertEquals(100_000L, stats.proModelTokens());
+        assertEquals(new BigDecimal("0.125000"), stats.estimatedActualCostUsd());
+        assertEquals(new BigDecimal("0.125000"), stats.estimatedBaselineProCostUsd());
+        assertEquals(new BigDecimal("0.000000"), stats.estimatedSavingsUsd());
+        assertEquals(0.0, stats.savingsPercentage());
     }
 }
