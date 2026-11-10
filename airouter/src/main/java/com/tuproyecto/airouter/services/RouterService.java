@@ -1,5 +1,6 @@
 package com.tuproyecto.airouter.services;
 
+import com.tuproyecto.airouter.clients.GeminiRestClient;
 import com.tuproyecto.airouter.exceptions.InvalidPromptException;
 import com.tuproyecto.airouter.models.dto.PromptRequest;
 import com.tuproyecto.airouter.models.dto.RouterResponse;
@@ -11,18 +12,20 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
-import lombok.RequiredArgsConstructor;
+import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Servicio de negocio encargado de evaluar la complejidad de los prompts entrantes,
  * estimar el consumo de tokens, decidir el modelo LLM óptimo en coste/rendimiento,
+ * invocar la API de Google Gemini en modo híbrido (BYOK, clave de servidor o fallback a simulación),
  * calcular las métricas financieras de ahorro y registrar el historial de peticiones.
  */
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class RouterService {
 
@@ -106,15 +109,67 @@ public class RouterService {
     private final RequestLogRepository requestLogRepository;
 
     /**
-     * Evalúa un prompt de entrada, estima sus tokens, selecciona el modelo LLM óptimo,
-     * persiste el registro de auditoría en la base de datos y devuelve la respuesta simulada.
+     * Cliente HTTP síncrono para comunicarse con la API oficial de Google Gemini.
+     */
+    private final GeminiRestClient geminiRestClient;
+
+    /**
+     * Clave de API global configurada a nivel de servidor como segundo nivel del modo híbrido.
+     */
+    private final String serverApiKey;
+
+    /**
+     * Constructor de compatibilidad para pruebas unitarias que solo requieren el repositorio JPA
+     * y operan exclusivamente en modo simulación.
+     *
+     * @param requestLogRepository repositorio de persistencia de registros de peticiones
+     */
+    public RouterService(RequestLogRepository requestLogRepository) {
+        this(requestLogRepository, null, "");
+    }
+
+    /**
+     * Constructor principal empleado por Spring para inyectar el repositorio, el cliente HTTP
+     * de Google Gemini y la clave de API opcional de servidor.
+     *
+     * @param requestLogRepository repositorio de persistencia de registros de peticiones
+     * @param geminiRestClient     cliente HTTP para invocar la API de Google Gemini
+     * @param serverApiKey         clave de API configurada en el servidor ({@code airouter.gemini.api-key})
+     */
+    @Autowired
+    public RouterService(
+            RequestLogRepository requestLogRepository,
+            GeminiRestClient geminiRestClient,
+            @Value("${airouter.gemini.api-key:}") String serverApiKey) {
+        this.requestLogRepository = requestLogRepository;
+        this.geminiRestClient = geminiRestClient;
+        this.serverApiKey = serverApiKey != null ? serverApiKey.trim() : "";
+    }
+
+    /**
+     * Evalúa un prompt de entrada sin clave de cliente explícita, delegando en el enrutador híbrido.
      *
      * @param request DTO con el identificador de usuario y el texto del prompt
-     * @return DTO {@link RouterResponse} con la decisión de enrutamiento y los datos persistidos
+     * @return DTO {@link RouterResponse} con la decisión de enrutamiento y la respuesta obtenida
      * @throws InvalidPromptException si la petición, el usuario o el prompt son inválidos
      */
     @Transactional
     public RouterResponse routePrompt(PromptRequest request) {
+        return routePrompt(request, null);
+    }
+
+    /**
+     * Evalúa un prompt de entrada, estima sus tokens, selecciona el modelo LLM óptimo,
+     * ejecuta la inferencia en modo híbrido (1º BYOK del cliente, 2º clave del servidor,
+     * 3º fallback resiliente a simulación), persiste el registro y devuelve la respuesta.
+     *
+     * @param request      DTO con el identificador de usuario y el texto del prompt
+     * @param clientApiKey clave de API opcional proporcionada por el cliente en la cabecera {@code X-API-Key}
+     * @return DTO {@link RouterResponse} con la decisión de enrutamiento y la respuesta real o simulada
+     * @throws InvalidPromptException si la petición, el usuario o el prompt son inválidos
+     */
+    @Transactional
+    public RouterResponse routePrompt(PromptRequest request, String clientApiKey) {
         validateRequest(request);
 
         String normalizedUserId = request.userId().trim();
@@ -126,6 +181,8 @@ public class RouterService {
         log.info("Enrutando petición del usuario '{}' [tokens estimados: {}] -> modelo seleccionado: {}",
                 normalizedUserId, tokensEstimated, selectedModel);
 
+        String finalResponseText = resolveModelResponse(selectedModel, promptContent, tokensEstimated, clientApiKey);
+
         RequestLog entityToSave = RequestLog.builder()
                 .userId(normalizedUserId)
                 .promptContent(promptContent)
@@ -135,7 +192,65 @@ public class RouterService {
                 .build();
 
         RequestLog savedEntity = requestLogRepository.save(entityToSave);
-        return toRouterResponse(savedEntity);
+        return new RouterResponse(
+                savedEntity.getId(),
+                savedEntity.getUserId(),
+                savedEntity.getPromptContent(),
+                savedEntity.getModelRouted(),
+                savedEntity.getTokensEstimated(),
+                finalResponseText,
+                savedEntity.getCreatedAt()
+        );
+    }
+
+    /**
+     * Resuelve la clave de API efectiva aplicando la jerarquía de 3 niveles del modo híbrido:
+     * <ol>
+     *   <li>Clave BYOK proporcionada por el usuario en la petición ({@code clientApiKey}).</li>
+     *   <li>Clave global configurada en el servidor ({@code airouter.gemini.api-key}).</li>
+     *   <li>{@link Optional#empty()} si ninguna clave está disponible (activa el modo simulación).</li>
+     * </ol>
+     *
+     * @param clientApiKey clave opcional recibida en la cabecera HTTP de la petición
+     * @return {@link Optional} con la clave efectiva recortada, o vacío si debe operar en simulación
+     */
+    public Optional<String> resolveEffectiveApiKey(String clientApiKey) {
+        if (clientApiKey != null && !clientApiKey.isBlank()) {
+            return Optional.of(clientApiKey.trim());
+        }
+        if (serverApiKey != null && !serverApiKey.isBlank()) {
+            return Optional.of(serverApiKey.trim());
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Obtiene la respuesta textual del modelo invocando Google Gemini si existe una clave activa
+     * y el cliente HTTP está disponible, o generando la respuesta simulada de respaldo en caso contrario.
+     *
+     * @param selectedModel   modelo LLM elegido por la heurística de costes
+     * @param promptContent   contenido del prompt del usuario
+     * @param tokensEstimated cantidad de tokens estimada
+     * @param clientApiKey    clave opcional enviada por el usuario
+     * @return texto de respuesta real de Gemini o respuesta simulada de fallback
+     */
+    private String resolveModelResponse(
+            String selectedModel,
+            String promptContent,
+            int tokensEstimated,
+            String clientApiKey) {
+        Optional<String> effectiveApiKey = resolveEffectiveApiKey(clientApiKey);
+        if (effectiveApiKey.isPresent() && geminiRestClient != null) {
+            Optional<String> realResponse = geminiRestClient.generateContent(
+                    selectedModel,
+                    promptContent.trim(),
+                    effectiveApiKey.get()
+            );
+            if (realResponse.isPresent() && !realResponse.get().isBlank()) {
+                return realResponse.get();
+            }
+        }
+        return buildSimulatedResponse(selectedModel, tokensEstimated);
     }
 
     /**

@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -30,21 +31,44 @@ import org.springframework.web.bind.annotation.RestController;
 public class GatewayController {
 
     /**
+     * Nombre de la cabecera HTTP opcional utilizada para enviar la API Key del cliente (modo BYOK)
+     * e identificar cuotas de límite de tasa (Rate Limiting).
+     */
+    public static final String API_KEY_HEADER = "X-API-Key";
+
+    /**
      * Servicio de negocio encargado de la evaluación de complejidad, estimación de tokens y enrutamiento.
      */
     private final RouterService routerService;
 
     /**
-     * Evalúa un prompt entrante, estima sus tokens, selecciona el modelo LLM óptimo en coste
-     * y registra la petición en la base de datos.
+     * Evalúa un prompt entrante sin cabecera de clave de API explícita, delegando en el servicio de enrutamiento.
      *
      * @param request DTO con el identificador del usuario y el prompt a evaluar
-     * @return DTO {@link RouterResponse} con el modelo seleccionado, tokens estimados y respuesta simulada
+     * @return DTO {@link RouterResponse} con el modelo seleccionado, tokens estimados y respuesta
+     */
+    public RouterResponse routePrompt(PromptRequest request) {
+        return routePrompt(request, null);
+    }
+
+    /**
+     * Evalúa un prompt entrante, estima sus tokens, selecciona el modelo LLM óptimo en coste,
+     * invoca la inferencia en modo híbrido (BYOK si se envía {@code X-API-Key}, clave de servidor
+     * o fallback a simulación) y registra la petición en la base de datos.
+     *
+     * @param request DTO con el identificador del usuario y el prompt a evaluar
+     * @param apiKey  clave de API opcional proporcionada por el usuario mediante la cabecera {@code X-API-Key}
+     * @return DTO {@link RouterResponse} con el modelo seleccionado, tokens estimados y respuesta real o simulada
      */
     @PostMapping("/prompt")
     @ResponseStatus(HttpStatus.OK)
-    public RouterResponse routePrompt(@RequestBody PromptRequest request) {
-        return routerService.routePrompt(request);
+    public RouterResponse routePrompt(
+            @RequestBody PromptRequest request,
+            @RequestHeader(value = API_KEY_HEADER, required = false) String apiKey) {
+        if (apiKey == null || apiKey.isBlank()) {
+            return routerService.routePrompt(request);
+        }
+        return routerService.routePrompt(request, apiKey);
     }
 
     /**

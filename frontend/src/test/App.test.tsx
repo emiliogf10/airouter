@@ -284,8 +284,79 @@ describe('AI Cost Router Dashboard - Pruebas de Integración', () => {
     await waitFor(() => {
       expect(screen.getByTestId('playground-result-card')).toBeInTheDocument();
       expect(screen.getByTestId('routed-model-badge')).toHaveTextContent('gemini-2.5-pro');
+      expect(screen.getByTestId('routed-execution-mode-badge')).toHaveTextContent('Modo Simulación');
       expect(screen.getByTestId('routed-tokens-badge')).toHaveTextContent('12 tokens');
       expect(screen.getByTestId('kpi-total-requests')).toHaveTextContent('3');
+    });
+  });
+
+  /**
+   * Verifica que el badge `routed-execution-mode-badge` muestre "Gemini API Real" cuando el usuario
+   * introduce una clave en `playground-apikey-input` (enviándola en la cabecera `X-API-Key`) y el backend
+   * devuelve una respuesta real generada por Google Gemini API.
+   */
+  it('muestra el badge Gemini API Real y envía la cabecera X-API-Key cuando se provee una clave BYOK', async () => {
+    let capturedHeaders: HeadersInit | undefined;
+
+    const realGeminiResponse: RouterResponse = {
+      id: 'd4e5f6a7-b8c9-0123-def0-234567890123',
+      userId: 'demo-user',
+      promptContent: 'Explica qué es un API Gateway de IA',
+      modelRouted: 'gemini-2.5-flash',
+      tokensEstimated: 9,
+      simulatedResponse:
+        'Un API Gateway de IA centraliza el enrutamiento, control de costes y seguridad entre múltiples modelos LLM.',
+      createdAt: '2026-10-20T22:42:00',
+    };
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/prompt') && init?.method === 'POST') {
+        capturedHeaders = init.headers;
+        return new Response(JSON.stringify(realGeminiResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/stats')) {
+        return new Response(JSON.stringify(MOCK_GLOBAL_STATS), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify([realGeminiResponse, ...MOCK_INITIAL_LOGS]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('kpi-total-requests')).toHaveTextContent('2');
+    });
+
+    const apiKeyInput = screen.getByTestId('playground-apikey-input');
+    await userEvent.type(apiKeyInput, 'AIzaSyTestByokKey123456');
+
+    const promptTextarea = screen.getByLabelText(/Contenido del Prompt/i);
+    await userEvent.clear(promptTextarea);
+    await userEvent.type(promptTextarea, 'Explica qué es un API Gateway de IA');
+
+    await userEvent.click(screen.getByTestId('submit-prompt-button'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('playground-result-card')).toBeInTheDocument();
+      expect(screen.getByTestId('routed-execution-mode-badge')).toHaveTextContent('Gemini API Real');
+      expect(screen.getByTestId('routed-model-badge')).toHaveTextContent('gemini-2.5-flash');
+    });
+
+    expect(capturedHeaders).toMatchObject({
+      'Content-Type': 'application/json',
+      'X-API-Key': 'AIzaSyTestByokKey123456',
     });
   });
 

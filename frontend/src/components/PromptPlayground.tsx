@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  Cpu,
   KeyRound,
   Send,
   Sparkles,
@@ -30,12 +31,16 @@ export const SIMPLE_PROMPT_EXAMPLE =
 export const COMPLEX_PROMPT_EXAMPLE =
   'Necesito diseñar una arquitectura de microservicios resiliente y analizar en profundidad cómo optimizar y refactorizar el balanceo de carga distribuido.';
 
+/** Prefijo estándar que identifica una respuesta generada por el motor de simulación local. */
+const SIMULATION_RESPONSE_PREFIX = '[Simulación AI Cost Router]';
+
 /**
  * Consola interactiva (`PromptPlayground`) con diseño minimalista inspirado en Vercel / shadcn/ui
  * para evaluar en vivo las reglas de negocio del enrutador inteligente (`POST /api/v1/router/prompt`).
- * Permite especificar `userId`, una clave opcional `X-API-Key` para pruebas de cuota de Rate Limiting,
- * cargar plantillas de prompts simples o complejos, visualizar la decisión del modelo y mostrar
- * alertas claras ante errores HTTP 400 o HTTP 429 (`Retry-After`).
+ * Soporta **Modo Híbrido (BYOK)**:
+ * - Si el usuario proporciona su clave de Google AI Studio (`AIzaSy...`) en `X-API-Key`, el Gateway
+ *   invoca la API oficial de Google Gemini en tiempo real.
+ * - Si se omite la clave, opera automáticamente en **Modo Simulación** sin coste.
  *
  * @param props Propiedades del componente.
  * @returns Tarjeta interactiva con formulario de envío y panel de resultado/error.
@@ -112,6 +117,9 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
   };
 
   const isProModel = lastResult?.modelRouted === 'gemini-2.5-pro';
+  const isSimulatedMode =
+    !lastResult?.simulatedResponse ||
+    lastResult.simulatedResponse.startsWith(SIMULATION_RESPONSE_PREFIX);
 
   return (
     <section
@@ -164,14 +172,14 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
               </div>
             </div>
 
-            {/* Campo opcional X-API-Key */}
+            {/* Campo opcional X-API-Key (Modo Híbrido BYOK) */}
             <div>
               <label
                 htmlFor="playground-api-key"
                 className="block text-xs font-medium text-zinc-300 mb-1.5"
               >
                 Cabecera <code className="text-indigo-400">X-API-Key</code>{' '}
-                <span className="text-gray-500">(Opcional)</span>
+                <span className="text-gray-500">(Modo Híbrido BYOK)</span>
               </label>
               <div className="relative">
                 <KeyRound
@@ -184,10 +192,15 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
                   type="password"
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="sk-airouter-demo-key..."
+                  placeholder="AIzaSy... (Google AI Studio) o vacío para Simulación"
                   className="w-full pl-9 pr-3 py-2 text-sm bg-zinc-950/80 border border-white/10 rounded-lg text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500/50 transition"
                 />
               </div>
+              <p className="text-[11px] text-zinc-400 mt-1 leading-snug">
+                Introduce tu clave <code className="text-zinc-300">AIzaSy...</code> para invocar{' '}
+                <span className="text-zinc-300 font-medium">Google Gemini real</span>, o déjalo vacío para{' '}
+                <span className="text-zinc-300 font-medium">Modo Simulación</span> sin coste.
+              </p>
             </div>
           </div>
 
@@ -286,7 +299,18 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
               <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
               Enrutamiento Completado
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                data-testid="routed-execution-mode-badge"
+                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium border ${
+                  isSimulatedMode
+                    ? 'bg-zinc-800/80 text-zinc-300 border-white/10'
+                    : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/25'
+                }`}
+              >
+                {!isSimulatedMode && <Cpu className="w-3 h-3" aria-hidden="true" />}
+                {isSimulatedMode ? 'Modo Simulación' : 'Gemini API Real'}
+              </span>
               <span
                 data-testid="routed-model-badge"
                 className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium border ${

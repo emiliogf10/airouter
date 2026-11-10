@@ -5,11 +5,14 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.tuproyecto.airouter.clients.GeminiRestClient;
 import com.tuproyecto.airouter.exceptions.InvalidPromptException;
 import com.tuproyecto.airouter.models.dto.PromptRequest;
 import com.tuproyecto.airouter.models.dto.RouterResponse;
@@ -20,6 +23,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -34,7 +38,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 /**
  * Pruebas unitarias exhaustivas para {@link RouterService} verificando la lógica de estimación
  * de tokens, casos borde de umbrales de enrutamiento, palabras clave complejas, validaciones
- * de dominio, cálculo de estadísticas de ahorro y persistencia en el repositorio.
+ * de dominio, los 3 niveles del modo híbrido (BYOK, clave de servidor y fallback a simulación),
+ * cálculo de estadísticas de ahorro y persistencia en el repositorio.
  */
 @ExtendWith(MockitoExtension.class)
 class RouterServiceTest {
@@ -413,5 +418,139 @@ class RouterServiceTest {
         assertEquals(new BigDecimal("0.125000"), stats.estimatedBaselineProCostUsd());
         assertEquals(new BigDecimal("0.000000"), stats.estimatedSavingsUsd());
         assertEquals(0.0, stats.savingsPercentage());
+    }
+
+    /**
+     * Verifica el Nivel 1 del Modo Híbrido (BYOK): cuando el cliente proporciona su propia clave
+     * {@code clientApiKey}, {@link RouterService} la prioriza sobre la clave del servidor e invoca
+     * {@link GeminiRestClient#generateContent(String, String, String)} devolviendo el texto real de Gemini.
+     */
+    @Test
+    @DisplayName("Modo Híbrido Nivel 1 (BYOK): Debe invocar GeminiRestClient con la clave del usuario y devolver su respuesta real")
+    void shouldUseClientByokKeyAndReturnRealGeminiResponse() {
+        GeminiRestClient mockGeminiClient = mock(GeminiRestClient.class);
+        RouterService hybridService = new RouterService(
+                requestLogRepository,
+                mockGeminiClient,
+                "AIzaSyServerGlobalKey"
+        );
+
+        when(requestLogRepository.save(any(RequestLog.class))).thenAnswer(invocation -> {
+            RequestLog arg = invocation.getArgument(0);
+            arg.setId(UUID.randomUUID());
+            arg.setCreatedAt(LocalDateTime.now());
+            return arg;
+        });
+
+        when(mockGeminiClient.generateContent(
+                RouterService.MODEL_FAST,
+                "Hola Gemini",
+                "AIzaSyUserByokKey123"))
+                .thenReturn(Optional.of("Respuesta en vivo desde Google Gemini con clave BYOK."));
+
+        RouterResponse response = hybridService.routePrompt(
+                new PromptRequest("byok-user", "  Hola Gemini  "),
+                "  AIzaSyUserByokKey123  "
+        );
+
+        assertEquals(RouterService.MODEL_FAST, response.modelRouted());
+        assertEquals("Respuesta en vivo desde Google Gemini con clave BYOK.", response.simulatedResponse());
+        verify(mockGeminiClient, times(1)).generateContent(
+                RouterService.MODEL_FAST,
+                "Hola Gemini",
+                "AIzaSyUserByokKey123"
+        );
+    }
+
+    /**
+     * Verifica el Nivel 2 del Modo Híbrido (Clave de Servidor): cuando el cliente no envía clave
+     * ({@code null} o en blanco), pero existe {@code airouter.gemini.api-key} configurada en el servidor,
+     * {@link RouterService} invoca {@link GeminiRestClient} con la clave global del servidor.
+     */
+    @Test
+    @DisplayName("Modo Híbrido Nivel 2 (Servidor): Debe usar la clave del servidor cuando clientApiKey es nula o en blanco")
+    void shouldUseServerApiKeyWhenClientApiKeyIsBlank() {
+        GeminiRestClient mockGeminiClient = mock(GeminiRestClient.class);
+        RouterService hybridService = new RouterService(
+                requestLogRepository,
+                mockGeminiClient,
+                "AIzaSyServerGlobalKey999"
+        );
+
+        when(requestLogRepository.save(any(RequestLog.class))).thenAnswer(invocation -> {
+            RequestLog arg = invocation.getArgument(0);
+            arg.setId(UUID.randomUUID());
+            arg.setCreatedAt(LocalDateTime.now());
+            return arg;
+        });
+
+        when(mockGeminiClient.generateContent(
+                RouterService.MODEL_PRO,
+                "Necesito optimizar la arquitectura",
+                "AIzaSyServerGlobalKey999"))
+                .thenReturn(Optional.of("Análisis de arquitectura generado con clave de servidor."));
+
+        RouterResponse response = hybridService.routePrompt(
+                new PromptRequest("server-key-user", "Necesito optimizar la arquitectura"),
+                "   "
+        );
+
+        assertEquals(RouterService.MODEL_PRO, response.modelRouted());
+        assertEquals("Análisis de arquitectura generado con clave de servidor.", response.simulatedResponse());
+        verify(mockGeminiClient, times(1)).generateContent(
+                RouterService.MODEL_PRO,
+                "Necesito optimizar la arquitectura",
+                "AIzaSyServerGlobalKey999"
+        );
+    }
+
+    /**
+     * Verifica el Nivel 3 del Modo Híbrido (Fallback Resiliente a Simulación): cuando no hay ninguna
+     * clave configurada o cuando {@link GeminiRestClient#generateContent(String, String, String)} devuelve
+     * {@link Optional#empty()} por error de red/autenticación, el servicio retorna la respuesta simulada
+     * {@code [Simulación AI Cost Router]...} sin interrumpir el flujo ni lanzar excepciones.
+     */
+    @Test
+    @DisplayName("Modo Híbrido Nivel 3 (Fallback): Debe volver a simulación cuando no hay clave o cuando GeminiRestClient devuelve Optional.empty()")
+    void shouldFallbackToSimulationWhenNoKeyOrWhenGeminiClientFails() {
+        GeminiRestClient mockGeminiClient = mock(GeminiRestClient.class);
+        RouterService hybridServiceNoKeys = new RouterService(
+                requestLogRepository,
+                mockGeminiClient,
+                "   "
+        );
+
+        when(requestLogRepository.save(any(RequestLog.class))).thenAnswer(invocation -> {
+            RequestLog arg = invocation.getArgument(0);
+            arg.setId(UUID.randomUUID());
+            arg.setCreatedAt(LocalDateTime.now());
+            return arg;
+        });
+
+        // Subcaso A: Sin clave de cliente ni clave de servidor -> no llama a GeminiRestClient y simula
+        RouterResponse simulatedNoKey = hybridServiceNoKeys.routePrompt(
+                new PromptRequest("fallback-user", "Consulta sencilla"),
+                null
+        );
+        assertTrue(simulatedNoKey.simulatedResponse().startsWith("[Simulación AI Cost Router]"));
+        verify(mockGeminiClient, never()).generateContent(anyString(), anyString(), anyString());
+
+        // Subcaso B: Con clave BYOK pero GeminiRestClient falla (devuelve Optional.empty()) -> fallback a simulación
+        when(mockGeminiClient.generateContent(
+                RouterService.MODEL_FAST,
+                "Consulta sencilla",
+                "AIzaSyExpiredKey"))
+                .thenReturn(Optional.empty());
+
+        RouterResponse simulatedOnFailure = hybridServiceNoKeys.routePrompt(
+                new PromptRequest("fallback-user", "Consulta sencilla"),
+                "AIzaSyExpiredKey"
+        );
+        assertTrue(simulatedOnFailure.simulatedResponse().startsWith("[Simulación AI Cost Router]"));
+        verify(mockGeminiClient, times(1)).generateContent(
+                RouterService.MODEL_FAST,
+                "Consulta sencilla",
+                "AIzaSyExpiredKey"
+        );
     }
 }
