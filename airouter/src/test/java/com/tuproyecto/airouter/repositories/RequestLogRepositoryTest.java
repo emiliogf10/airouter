@@ -7,9 +7,12 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.tuproyecto.airouter.models.entities.RequestLog;
+import com.tuproyecto.airouter.models.entities.UserBudget;
 import com.tuproyecto.airouter.services.RouterService;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -19,26 +22,34 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Pruebas de integración para {@link RequestLogRepository} y la entidad {@link RequestLog}
- * verificando el esquema Flyway en H2, generación de UUID, callback {@code @PrePersist},
- * ordenación cronológica descendente y contrato manual de {@code equals}/{@code hashCode}.
+ * Pruebas de integración para {@link RequestLogRepository}, {@link UserBudgetRepository} y las entidades
+ * {@link RequestLog} y {@link UserBudget}, verificando las migraciones Flyway {@code V1} y {@code V2}
+ * en H2, generación de UUID, callbacks {@code @PrePersist}/{@code @PreUpdate}, precisión decimal de
+ * presupuestos FinOps y contrato manual de {@code equals}/{@code hashCode}.
  */
 @SpringBootTest
 @Transactional
 class RequestLogRepositoryTest {
 
     /**
-     * Repositorio JPA bajo prueba conectado a la base de datos H2 en memoria.
+     * Repositorio JPA de logs bajo prueba conectado a la base de datos H2 en memoria.
      */
     @Autowired
     private RequestLogRepository requestLogRepository;
 
     /**
-     * Limpia todos los registros de la tabla {@code request_logs} antes de cada prueba.
+     * Repositorio JPA de presupuestos por usuario (migración Flyway V2) bajo prueba.
+     */
+    @Autowired
+    private UserBudgetRepository userBudgetRepository;
+
+    /**
+     * Limpia todos los registros de las tablas {@code request_logs} y {@code user_budgets} antes de cada prueba.
      */
     @BeforeEach
     void setUp() {
         requestLogRepository.deleteAll();
+        userBudgetRepository.deleteAll();
     }
 
     /**
@@ -176,5 +187,39 @@ class RequestLogRepositoryTest {
         // Dos entidades transitorias (id == null) distintas en memoria no deben considerarse iguales
         assertNotEquals(transientLog1, transientLog2);
         assertEquals(0, transientLog1.hashCode());
+    }
+
+    /**
+     * Verifica la migración Flyway {@code V2__create_user_budgets_table.sql} y las operaciones de
+     * {@link UserBudgetRepository}: guardado con precisión de 6 decimales en {@code maxBudgetUsd},
+     * búsqueda mediante {@link UserBudgetRepository#findByUserId(String)}, eliminación con
+     * {@link UserBudgetRepository#deleteByUserId(String)} y contrato {@code equals}/{@code hashCode}.
+     */
+    @Test
+    @DisplayName("Migración V2 (user_budgets): Debe persistir, buscar por userId y eliminar UserBudget con precisión de 6 decimales")
+    void shouldSaveFindAndDeleteUserBudgetWithSixDecimalScale() {
+        UserBudget budget = UserBudget.builder()
+                .userId("finops-user-01")
+                .maxBudgetUsd(new BigDecimal("0.001250"))
+                .autoDowngradeEnabled(null)
+                .build();
+
+        UserBudget saved = userBudgetRepository.saveAndFlush(budget);
+
+        assertNotNull(saved.getId(), "El UUID de UserBudget debe generarse automáticamente");
+        assertNotNull(saved.getUpdatedAt(), "El campo updatedAt debe poblarse mediante @PrePersist");
+        assertTrue(saved.getAutoDowngradeEnabled(), "autoDowngradeEnabled debe inicializarse a true por defecto");
+        assertEquals(new BigDecimal("0.001250"), saved.getMaxBudgetUsd());
+
+        Optional<UserBudget> foundOpt = userBudgetRepository.findByUserId("finops-user-01");
+        assertTrue(foundOpt.isPresent());
+        assertEquals(0, new BigDecimal("0.001250").compareTo(foundOpt.get().getMaxBudgetUsd()));
+        assertEquals(saved, foundOpt.get());
+        assertEquals(saved.hashCode(), foundOpt.get().hashCode());
+
+        userBudgetRepository.deleteByUserId("finops-user-01");
+        userBudgetRepository.flush();
+
+        assertTrue(userBudgetRepository.findByUserId("finops-user-01").isEmpty());
     }
 }

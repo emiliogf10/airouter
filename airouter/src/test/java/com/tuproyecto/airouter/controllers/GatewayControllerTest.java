@@ -10,12 +10,14 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.tuproyecto.airouter.models.dto.PromptRequest;
 import com.tuproyecto.airouter.models.dto.RouterResponse;
 import com.tuproyecto.airouter.repositories.RequestLogRepository;
+import com.tuproyecto.airouter.repositories.UserBudgetRepository;
 import com.tuproyecto.airouter.services.RouterService;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -58,17 +60,24 @@ class GatewayControllerTest {
     private RequestLogRepository requestLogRepository;
 
     /**
+     * Repositorio JPA de presupuestos por usuario utilizado para limpiar el estado antes de cada prueba.
+     */
+    @Autowired
+    private UserBudgetRepository userBudgetRepository;
+
+    /**
      * Cliente de pruebas MVC para simular peticiones HTTP contra el controlador.
      */
     private MockMvc mockMvc;
 
     /**
-     * Inicializa {@link MockMvc} y vacía la tabla {@code request_logs} antes de cada test.
+     * Inicializa {@link MockMvc} y vacía las tablas {@code request_logs} y {@code user_budgets} antes de cada test.
      */
     @BeforeEach
     void setUp() {
         this.mockMvc = MockMvcBuilders.webAppContextSetup(this.webApplicationContext).build();
         this.requestLogRepository.deleteAll();
+        this.userBudgetRepository.deleteAll();
     }
 
     /**
@@ -373,6 +382,60 @@ class GatewayControllerTest {
                         .content(""))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", notNullValue()))
+                .andExpect(jsonPath("$.timestamp", notNullValue()));
+    }
+
+    /**
+     * Verifica de extremo a extremo los endpoints FinOps {@code GET /api/v1/router/budget/{userId}} y
+     * {@code PUT /api/v1/router/budget/{userId}}, así como el bloqueo HTTP {@code 402 Payment Required}
+     * en {@code POST /api/v1/router/prompt} cuando el usuario alcanza el 100% de su presupuesto.
+     *
+     * @throws Exception si ocurre un error durante las peticiones simuladas
+     */
+    @Test
+    @DisplayName("GET/PUT /api/v1/router/budget/{userId} y bloqueo HTTP 402 Payment Required al superar el 100% del presupuesto")
+    void shouldManageBudgetEndpointsAndReturn402PaymentRequiredWhenBudgetIsExhausted() throws Exception {
+        // 1. Consulta inicial sin presupuesto configurado -> 200 OK con status UNLIMITED
+        mockMvc.perform(get("/api/v1/router/budget/finops-qa"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId", is("finops-qa")))
+                .andExpect(jsonPath("$.status", is(RouterService.BUDGET_STATUS_UNLIMITED)));
+
+        // 2. Configurar presupuesto micro de $0.000001 USD mediante PUT -> 200 OK con status OK
+        String budgetPayload = """
+                {
+                    "maxBudgetUsd": 0.000001,
+                    "autoDowngradeEnabled": true
+                }
+                """;
+
+        mockMvc.perform(put("/api/v1/router/budget/finops-qa")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(budgetPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId", is("finops-qa")))
+                .andExpect(jsonPath("$.maxBudgetUsd", is(0.000001)))
+                .andExpect(jsonPath("$.status", is(RouterService.BUDGET_STATUS_OK)));
+
+        // 3. Primera petición de prompt consume >= $0.000001 USD (ej. 16 caracteres con "arquitectura" = 4 tokens en Pro = $0.000005 USD)
+        String firstPromptPayload = """
+                {
+                    "userId": "finops-qa",
+                    "prompt": "Optimizar arquitectura"
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/router/prompt")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(firstPromptPayload))
+                .andExpect(status().isOk());
+
+        // 4. Segunda petición de prompt con el presupuesto ya agotado al 100% -> 402 Payment Required + ErrorResponse
+        mockMvc.perform(post("/api/v1/router/prompt")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(firstPromptPayload))
+                .andExpect(status().isPaymentRequired())
+                .andExpect(jsonPath("$.message", containsString("Cortafuegos presupuestario activado")))
                 .andExpect(jsonPath("$.timestamp", notNullValue()));
     }
 }

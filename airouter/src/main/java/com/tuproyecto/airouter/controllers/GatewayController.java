@@ -3,12 +3,16 @@ package com.tuproyecto.airouter.controllers;
 import com.tuproyecto.airouter.models.dto.PromptRequest;
 import com.tuproyecto.airouter.models.dto.RouterResponse;
 import com.tuproyecto.airouter.models.dto.RouterStatsResponse;
+import com.tuproyecto.airouter.models.dto.UserBudgetRequest;
+import com.tuproyecto.airouter.models.dto.UserBudgetResponse;
 import com.tuproyecto.airouter.services.RouterService;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -99,5 +103,35 @@ public class GatewayController {
     @ResponseStatus(HttpStatus.OK)
     public RouterStatsResponse getStats(@RequestParam(required = false) String userId) {
         return routerService.getStats(userId);
+    }
+
+    /**
+     * Consulta el estado actual del cortafuegos presupuestario (FinOps / Hard Budget Cap) de un usuario.
+     *
+     * @param userId identificador del usuario cuyo presupuesto se desea consultar
+     * @return DTO {@link UserBudgetResponse} con el límite configurado, gasto acumulado, saldo y estado
+     */
+    @GetMapping("/budget/{userId}")
+    @ResponseStatus(HttpStatus.OK)
+    public UserBudgetResponse getUserBudget(@PathVariable String userId) {
+        return routerService.getUserBudget(userId);
+    }
+
+    /**
+     * Crea, actualiza o desactiva el límite presupuestario máximo (en USD) de un usuario.
+     *
+     * <p>Si el cuerpo es nulo o {@code maxBudgetUsd <= 0}, se elimina el límite dejando al usuario
+     * en estado {@code UNLIMITED}.</p>
+     *
+     * @param userId  identificador del usuario cuyo presupuesto se desea configurar
+     * @param request DTO con el presupuesto máximo en USD y la preferencia de auto-downgrade al 80%
+     * @return DTO {@link UserBudgetResponse} con el estado presupuestario actualizado
+     */
+    @PutMapping("/budget/{userId}")
+    @ResponseStatus(HttpStatus.OK)
+    public UserBudgetResponse updateUserBudget(
+            @PathVariable String userId,
+            @RequestBody(required = false) UserBudgetRequest request) {
+        return routerService.updateUserBudget(userId, request);
     }
 }

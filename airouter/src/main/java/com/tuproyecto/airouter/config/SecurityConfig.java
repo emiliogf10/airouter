@@ -24,14 +24,24 @@ public class SecurityConfig implements WebMvcConfigurer {
     /**
      * Registra las reglas restrictivas de CORS para los endpoints de la API v1.
      *
-     * <p>Autoriza exclusivamente los métodos {@code GET}, {@code POST} y {@code OPTIONS},
-     * habilita el uso de credenciales y expone la cabecera {@code Retry-After} para que el
-     * cliente frontend pueda gestionar adecuadamente las respuestas HTTP 429 de límite de cuota.</p>
+     * <p>Habilita {@code GET}, {@code PUT}, {@code DELETE} y {@code OPTIONS} específicamente para la
+     * gestión de presupuestos FinOps ({@code /api/v1/router/budget/**}), mientras restringe el resto de
+     * rutas de {@code /api/v1/**} exclusivamente a {@code GET}, {@code POST} y {@code OPTIONS}.
+     * Expone además la cabecera {@code Retry-After} para que el cliente frontend pueda gestionar
+     * adecuadamente las respuestas HTTP 429 de límite de cuota.</p>
      *
      * @param registry registro de configuraciones CORS de Spring Web MVC
      */
     @Override
     public void addCorsMappings(CorsRegistry registry) {
+        registry.addMapping("/api/v1/router/budget/**")
+                .allowedOrigins(allowedOrigins)
+                .allowedMethods("GET", "PUT", "DELETE", "OPTIONS")
+                .allowedHeaders("Content-Type", "X-API-Key", "Authorization", "Accept")
+                .exposedHeaders("Retry-After")
+                .allowCredentials(true)
+                .maxAge(3600);
+
         registry.addMapping("/api/v1/**")
                 .allowedOrigins(allowedOrigins)
                 .allowedMethods("GET", "POST", "OPTIONS")

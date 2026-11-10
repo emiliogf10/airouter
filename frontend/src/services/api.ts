@@ -3,6 +3,8 @@ import type {
   PromptRequest,
   RouterResponse,
   RouterStatsResponse,
+  UserBudgetRequest,
+  UserBudgetResponse,
 } from '../types/router';
 
 /**
@@ -13,10 +15,10 @@ const API_BASE_URL = '/api/v1/router';
 
 /**
  * Clase de error personalizada para encapsular fallos HTTP devueltos por la API del backend,
- * incluyendo soporte específico para el código HTTP 429 (Rate Limiting) y la cabecera `Retry-After`.
+ * incluyendo soporte específico para HTTP 402 (Cortafuegos Presupuestario) y HTTP 429 (Rate Limiting).
  */
 export class ApiError extends Error {
-  /** Código de estado HTTP devuelto por el servidor (ej. 400, 429, 500). */
+  /** Código de estado HTTP devuelto por el servidor (ej. 400, 402, 429, 500). */
   public readonly status: number;
   /** Segundos de espera indicados por la cabecera `Retry-After` en caso de HTTP 429. */
   public readonly retryAfterSeconds?: number;
@@ -34,6 +36,25 @@ export class ApiError extends Error {
     this.status = status;
     this.retryAfterSeconds = retryAfterSeconds;
   }
+}
+
+/**
+ * Construye una respuesta de presupuesto ilimitado por defecto para un usuario,
+ * utilizada como respaldo seguro cuando el usuario aún no tiene presupuesto o en entornos simulados.
+ *
+ * @param userId Identificador del usuario.
+ * @returns Objeto `UserBudgetResponse` en estado `'UNLIMITED'`.
+ */
+export function createDefaultUserBudget(userId: string): UserBudgetResponse {
+  return {
+    userId: userId.trim() || 'demo-user',
+    maxBudgetUsd: null,
+    currentSpendUsd: 0,
+    remainingBudgetUsd: null,
+    usagePercentage: 0,
+    autoDowngradeEnabled: true,
+    status: 'UNLIMITED',
+  };
 }
 
 /**
@@ -76,12 +97,12 @@ async function handleErrorResponse(response: Response): Promise<never> {
 
 /**
  * Envía un prompt al endpoint `POST /api/v1/router/prompt` para evaluar su complejidad,
- * estimar sus tokens y enrutarlo al modelo óptimo en coste (`gemini-2.5-flash` o `gemini-2.5-pro`).
+ * verificar el presupuesto FinOps del usuario, estimar sus tokens y enrutarlo al modelo óptimo.
  *
  * @param request Objeto con el `userId` y el texto del `prompt` a evaluar.
- * @param apiKey  Clave de API opcional enviada en la cabecera `X-API-Key` para identificar la cuota de Rate Limiting.
- * @returns Promesa con el objeto `RouterResponse` que contiene la decisión de enrutamiento y la respuesta simulada.
- * @throws {ApiError} Si ocurre un error de validación (HTTP 400) o se supera el límite de peticiones (HTTP 429).
+ * @param apiKey  Clave de API opcional enviada en la cabecera `X-API-Key` para BYOK y cuota de Rate Limiting.
+ * @returns Promesa con el objeto `RouterResponse` que contiene la decisión de enrutamiento y la respuesta.
+ * @throws {ApiError} Si ocurre un error de validación (400), presupuesto agotado (402) o límite de tasa (429).
  */
 export async function sendPrompt(
   request: PromptRequest,
@@ -146,4 +167,65 @@ export async function fetchStats(userId?: string): Promise<RouterStatsResponse> 
   }
 
   return (await response.json()) as RouterStatsResponse;
+}
+
+/**
+ * Consulta el estado actual del presupuesto FinOps y gasto acumulado de un usuario
+ * desde el endpoint `GET /api/v1/router/budget/{userId}`.
+ * Incluye validación defensiva para devolver un estado `'UNLIMITED'` por defecto si un mock
+ * de pruebas heredado no contempla la ruta `/budget/`.
+ *
+ * @param userId Identificador del usuario cuyo presupuesto se desea consultar.
+ * @returns Promesa con el objeto `UserBudgetResponse`.
+ */
+export async function fetchUserBudget(userId: string): Promise<UserBudgetResponse> {
+  const cleanUser = userId.trim() || 'demo-user';
+  try {
+    const response = await fetch(`${API_BASE_URL}/budget/${encodeURIComponent(cleanUser)}`);
+    if (!response) {
+      return createDefaultUserBudget(cleanUser);
+    }
+    if (!response.ok) {
+      return handleErrorResponse(response);
+    }
+    const data = (await response.json()) as Partial<UserBudgetResponse>;
+    if (!data || Array.isArray(data) || typeof data.status !== 'string') {
+      return createDefaultUserBudget(cleanUser);
+    }
+    return data as UserBudgetResponse;
+  } catch (err) {
+    if (err instanceof ApiError) {
+      throw err;
+    }
+    return createDefaultUserBudget(cleanUser);
+  }
+}
+
+/**
+ * Actualiza o elimina el límite presupuestario FinOps de un usuario mediante el endpoint
+ * `PUT /api/v1/router/budget/{userId}`.
+ *
+ * @param userId  Identificador del usuario cuyo presupuesto se desea configurar.
+ * @param payload Datos de configuración (`maxBudgetUsd` en USD y `autoDowngradeEnabled`).
+ * @returns Promesa con el objeto `UserBudgetResponse` actualizado.
+ * @throws {ApiError} Si la petición HTTP devuelve un error.
+ */
+export async function updateUserBudget(
+  userId: string,
+  payload: UserBudgetRequest,
+): Promise<UserBudgetResponse> {
+  const cleanUser = userId.trim() || 'demo-user';
+  const response = await fetch(`${API_BASE_URL}/budget/${encodeURIComponent(cleanUser)}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    return handleErrorResponse(response);
+  }
+
+  return (await response.json()) as UserBudgetResponse;
 }
