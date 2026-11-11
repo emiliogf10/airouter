@@ -19,14 +19,27 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 public class GlobalExceptionHandler {
 
     /**
-     * Captura las excepciones de validación de prompts inválidos y devuelve un estado HTTP 400 (Bad Request).
+     * Captura las excepciones de validación de prompts o parámetros inválidos y devuelve un estado HTTP 400 (Bad Request).
      *
      * @param ex excepción de dominio con el detalle del error de validación
      * @return DTO {@link ErrorResponse} con el mensaje descriptivo y la marca temporal actual
      */
-    @ExceptionHandler(InvalidPromptException.class)
+    @ExceptionHandler({InvalidPromptException.class, IllegalArgumentException.class})
     @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public ErrorResponse handleInvalidPromptException(InvalidPromptException ex) {
+    public ErrorResponse handleInvalidPromptException(RuntimeException ex) {
+        return new ErrorResponse(ex.getMessage(), LocalDateTime.now());
+    }
+
+    /**
+     * Captura la excepción del cortafuegos presupuestario (FinOps) cuando el usuario alcanza el 100%
+     * de su presupuesto máximo y devuelve un estado HTTP 402 (Payment Required).
+     *
+     * @param ex excepción de presupuesto agotado con el detalle del gasto acumulado y límite
+     * @return DTO {@link ErrorResponse} con el mensaje de bloqueo presupuestario y la marca temporal actual
+     */
+    @ExceptionHandler(BudgetExceededException.class)
+    @ResponseStatus(HttpStatus.PAYMENT_REQUIRED)
+    public ErrorResponse handleBudgetExceededException(BudgetExceededException ex) {
         return new ErrorResponse(ex.getMessage(), LocalDateTime.now());
     }
 

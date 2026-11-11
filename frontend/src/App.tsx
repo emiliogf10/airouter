@@ -1,12 +1,23 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertCircle } from 'lucide-react';
+import { BudgetControlCard } from './components/BudgetControlCard';
 import { Header } from './components/Header';
 import { ModelDistributionChart } from './components/ModelDistributionChart';
 import { PromptPlayground } from './components/PromptPlayground';
 import { RecentLogsTable } from './components/RecentLogsTable';
 import { StatsCards } from './components/StatsCards';
-import { fetchLogs, fetchStats } from './services/api';
-import type { CurrencyCode, RouterResponse, RouterStatsResponse } from './types/router';
+import {
+  createDefaultUserBudget,
+  fetchLogs,
+  fetchStats,
+  fetchUserBudget,
+} from './services/api';
+import type {
+  CurrencyCode,
+  RouterResponse,
+  RouterStatsResponse,
+  UserBudgetResponse,
+} from './types/router';
 
 /**
  * Estado inicial vacío de métricas cuando aún no se han cargado datos del servidor.
@@ -30,6 +41,7 @@ const INITIAL_STATS: RouterStatsResponse = {
  * Coordina la gestión de estado global para:
  * - El selector interactivo de moneda (`EUR €` seleccionado por defecto o `USD $`).
  * - El filtrado reactivo de telemetría e historial por usuario (`userId`).
+ * - El panel de control de Cortafuegos Presupuestario FinOps (`BudgetControlCard`).
  * - La sincronización automática de estadísticas (`GET /api/v1/router/stats`) y registros (`GET /api/v1/router/logs`).
  *
  * @returns Interfaz completa del panel de control de AI Cost Router.
@@ -39,6 +51,12 @@ export const App: React.FC = () => {
   const [currency, setCurrency] = useState<CurrencyCode>('EUR');
   /** Filtro opcional por identificador de usuario (`userId`). */
   const [filterUserId, setFilterUserId] = useState<string>('');
+  /** Usuario actualmente inspeccionado en el panel de presupuesto FinOps (`demo-user` por defecto). */
+  const [budgetUserId, setBudgetUserId] = useState<string>('demo-user');
+  /** Estado del presupuesto FinOps del usuario gestionado. */
+  const [userBudget, setUserBudget] = useState<UserBudgetResponse>(() =>
+    createDefaultUserBudget('demo-user'),
+  );
   /** Métricas agregadas de consumo de tokens y ahorro financiero. */
   const [stats, setStats] = useState<RouterStatsResponse>(INITIAL_STATS);
   /** Historial reciente de peticiones evaluadas por el Gateway. */
@@ -53,45 +71,85 @@ export const App: React.FC = () => {
   const [quickTrySignal, setQuickTrySignal] = useState<number>(0);
 
   /**
+   * Sincroniza de forma aislada el presupuesto FinOps de un usuario específico
+   * sin bloquear ni interferir con la carga principal de métricas e historial.
+   *
+   * @param targetUser Identificador del usuario cuyo presupuesto se desea cargar.
+   */
+  const loadBudgetForUser = useCallback(async (targetUser: string) => {
+    const effectiveUser = targetUser.trim() || 'demo-user';
+    const budgetData = await fetchUserBudget(effectiveUser);
+    setUserBudget(budgetData);
+  }, []);
+
+  /**
    * Consulta en paralelo las métricas (`/stats`) y el historial (`/logs`) del backend,
-   * aplicando el filtro `filterUserId` cuando está definido.
+   * aplicando el filtro `filterUserId` cuando está definido, y posteriormente actualiza
+   * el estado del presupuesto FinOps del usuario activo.
    *
    * @param userFilter Identificador de usuario opcional para filtrar los datos.
    */
-  const loadDashboardData = useCallback(async (userFilter?: string) => {
-    setIsLoading(true);
-    setConnectionWarning(null);
-    try {
-      const [statsData, logsData] = await Promise.all([
-        fetchStats(userFilter),
-        fetchLogs(userFilter),
-      ]);
-      setStats(statsData);
-      setLogs(logsData);
-      setIsGatewayOnline(true);
-    } catch (err) {
-      setIsGatewayOnline(false);
-      const detail =
-        err instanceof Error ? err.message : 'No se pudo conectar con el servidor Backend.';
-      setConnectionWarning(
-        `No se pudieron sincronizar los datos con el Gateway (${detail}). Verifica que el backend esté activo en el puerto 8080.`,
-      );
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+  const loadDashboardData = useCallback(
+    async (userFilter?: string) => {
+      setIsLoading(true);
+      setConnectionWarning(null);
+      const effectiveBudgetUser = userFilter?.trim() || budgetUserId || 'demo-user';
+      try {
+        const [statsData, logsData] = await Promise.all([
+          fetchStats(userFilter),
+          fetchLogs(userFilter),
+        ]);
+        setStats(statsData);
+        setLogs(logsData);
+        setIsGatewayOnline(true);
+      } catch (err) {
+        setIsGatewayOnline(false);
+        const detail =
+          err instanceof Error ? err.message : 'No se pudo conectar con el servidor Backend.';
+        setConnectionWarning(
+          `No se pudieron sincronizar los datos con el Gateway (${detail}). Verifica que el backend esté activo en el puerto 8080.`,
+        );
+      } finally {
+        setIsLoading(false);
+      }
+
+      void loadBudgetForUser(effectiveBudgetUser);
+    },
+    [budgetUserId, loadBudgetForUser],
+  );
 
   useEffect(() => {
+    if (filterUserId.trim() !== '') {
+      setBudgetUserId(filterUserId.trim());
+    }
     void loadDashboardData(filterUserId);
   }, [filterUserId, loadDashboardData]);
 
   /**
    * Callback ejecutado cuando el simulador procesa un nuevo prompt con éxito,
-   * recargando las estadísticas y la tabla de historial automáticamente.
+   * recargando las estadísticas, el historial y el presupuesto automáticamente.
    */
-  const handlePromptSuccess = useCallback(() => {
-    void loadDashboardData(filterUserId);
-  }, [filterUserId, loadDashboardData]);
+  const handlePromptSuccess = useCallback(
+    (response: RouterResponse) => {
+      const targetUser = filterUserId.trim() || response.userId || 'demo-user';
+      setBudgetUserId(targetUser);
+      void loadDashboardData(filterUserId);
+      void loadBudgetForUser(targetUser);
+    },
+    [filterUserId, loadBudgetForUser, loadDashboardData],
+  );
+
+  /**
+   * Callback invocado cuando ocurre actividad de presupuesto o bloqueo HTTP 402 en el simulador.
+   */
+  const handleBudgetActivity = useCallback(
+    (targetUser: string) => {
+      const cleanUser = targetUser.trim() || 'demo-user';
+      setBudgetUserId(cleanUser);
+      void loadBudgetForUser(cleanUser);
+    },
+    [loadBudgetForUser],
+  );
 
   /**
    * Carga un prompt de ejemplo en el simulador y desplaza suavemente el foco al área de texto.
@@ -129,11 +187,19 @@ export const App: React.FC = () => {
         {/* Cuadrícula superior de métricas clave con MetricCard */}
         <StatsCards stats={stats} currency={currency} isLoading={isLoading} />
 
+        {/* Panel de Control Presupuestario FinOps por Usuario */}
+        <BudgetControlCard
+          budget={userBudget}
+          currency={currency}
+          onBudgetUpdated={setUserBudget}
+        />
+
         {/* Sección central: Simulador interactivo + Distribución por modelo */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <PromptPlayground
             onPromptSuccess={handlePromptSuccess}
             quickTrySignal={quickTrySignal}
+            onUserOrBudgetActivity={handleBudgetActivity}
           />
           <ModelDistributionChart stats={stats} isLoading={isLoading} />
         </div>

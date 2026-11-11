@@ -24,6 +24,22 @@ export function convertFromUsd(amountUsd: number, currency: CurrencyCode): numbe
 }
 
 /**
+ * Convierte un importe introducido por el usuario en la divisa activa (`'EUR'` o `'USD'`)
+ * a dólares estadounidenses (USD) con precisión de 6 decimales para enviarlo al backend.
+ *
+ * @param amountInCurrency Importe expresado en la moneda activa de la interfaz.
+ * @param currency         Código de divisa activa (`'EUR'` o `'USD'`).
+ * @returns Importe equivalente en dólares estadounidenses (USD) redondeado a 6 decimales.
+ */
+export function convertToUsd(amountInCurrency: number, currency: CurrencyCode): number {
+  const safeAmount = Number.isFinite(amountInCurrency) ? amountInCurrency : 0;
+  if (currency === 'EUR') {
+    return Number((safeAmount / USD_TO_EUR_RATE).toFixed(6));
+  }
+  return Number(safeAmount.toFixed(6));
+}
+
+/**
  * Formatea un importe originalmente en dólares estadounidenses (USD) a una cadena legible
  * con precisión de 6 decimales y el símbolo monetario correspondiente a la divisa activa.
  *

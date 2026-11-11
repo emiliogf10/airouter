@@ -1,12 +1,17 @@
 package com.tuproyecto.airouter.services;
 
 import com.tuproyecto.airouter.clients.GeminiRestClient;
+import com.tuproyecto.airouter.exceptions.BudgetExceededException;
 import com.tuproyecto.airouter.exceptions.InvalidPromptException;
 import com.tuproyecto.airouter.models.dto.PromptRequest;
 import com.tuproyecto.airouter.models.dto.RouterResponse;
 import com.tuproyecto.airouter.models.dto.RouterStatsResponse;
+import com.tuproyecto.airouter.models.dto.UserBudgetRequest;
+import com.tuproyecto.airouter.models.dto.UserBudgetResponse;
 import com.tuproyecto.airouter.models.entities.RequestLog;
+import com.tuproyecto.airouter.models.entities.UserBudget;
 import com.tuproyecto.airouter.repositories.RequestLogRepository;
+import com.tuproyecto.airouter.repositories.UserBudgetRepository;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
@@ -22,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Servicio de negocio encargado de evaluar la complejidad de los prompts entrantes,
  * estimar el consumo de tokens, decidir el modelo LLM óptimo en coste/rendimiento,
+ * aplicar el cortafuegos presupuestario FinOps por usuario (auto-downgrade al 80% y bloqueo al 100%),
  * invocar la API de Google Gemini en modo híbrido (BYOK, clave de servidor o fallback a simulación),
  * calcular las métricas financieras de ahorro y registrar el historial de peticiones.
  */
@@ -46,9 +52,39 @@ public class RouterService {
     public static final int TOKEN_THRESHOLD = 50;
 
     /**
-     * Longitud máxima permitida para el identificador de usuario según el esquema de base de datos.
+     * Longitud máxima permitida para el identificador de usuario según el esquema de base de datos de logs.
      */
     public static final int MAX_USER_ID_LENGTH = 255;
+
+    /**
+     * Longitud máxima permitida para el identificador de usuario en la tabla {@code user_budgets}.
+     */
+    public static final int MAX_BUDGET_USER_ID_LENGTH = 120;
+
+    /**
+     * Estado FinOps cuando el usuario no tiene límite presupuestario activo.
+     */
+    public static final String BUDGET_STATUS_UNLIMITED = "UNLIMITED";
+
+    /**
+     * Estado FinOps cuando el gasto del usuario está por debajo del umbral de alerta (80%).
+     */
+    public static final String BUDGET_STATUS_OK = "OK";
+
+    /**
+     * Estado FinOps cuando el gasto alcanza o supera el 80% y se activa la degradación automática a Flash.
+     */
+    public static final String BUDGET_STATUS_WARNING_80 = "WARNING_80_DOWNGRADE";
+
+    /**
+     * Estado FinOps cuando el usuario alcanza o supera el 100% de su presupuesto y queda bloqueado (HTTP 402).
+     */
+    public static final String BUDGET_STATUS_EXCEEDED_100 = "EXCEEDED_100_BLOCKED";
+
+    /**
+     * Porcentaje de consumo a partir del cual se activa la degradación automática (Auto-Downgrade) a {@link #MODEL_FAST}.
+     */
+    public static final double BUDGET_DOWNGRADE_THRESHOLD_PERCENT = 80.0;
 
     /**
      * Tarifa de referencia en dólares estadounidenses (USD) por cada millón de tokens
@@ -83,7 +119,7 @@ public class RouterService {
     private static final int INTERNAL_CALCULATION_SCALE = 12;
 
     /**
-     * Escala decimal empleada para redondear el porcentaje de ahorro económico.
+     * Escala decimal empleada para redondear el porcentaje de ahorro económico o uso presupuestario.
      */
     private static final int PERCENTAGE_DECIMAL_SCALE = 2;
 
@@ -109,6 +145,11 @@ public class RouterService {
     private final RequestLogRepository requestLogRepository;
 
     /**
+     * Repositorio JPA para la gestión de los límites presupuestarios por usuario (FinOps).
+     */
+    private UserBudgetRepository userBudgetRepository;
+
+    /**
      * Cliente HTTP síncrono para comunicarse con la API oficial de Google Gemini.
      */
     private final GeminiRestClient geminiRestClient;
@@ -119,31 +160,71 @@ public class RouterService {
     private final String serverApiKey;
 
     /**
-     * Constructor de compatibilidad para pruebas unitarias que solo requieren el repositorio JPA
-     * y operan exclusivamente en modo simulación.
+     * Constructor de compatibilidad para pruebas unitarias que solo requieren el repositorio JPA de logs
+     * y operan exclusivamente en modo simulación sin cortafuegos presupuestario.
      *
      * @param requestLogRepository repositorio de persistencia de registros de peticiones
      */
     public RouterService(RequestLogRepository requestLogRepository) {
-        this(requestLogRepository, null, "");
+        this(requestLogRepository, null, null, "");
     }
 
     /**
-     * Constructor principal empleado por Spring para inyectar el repositorio, el cliente HTTP
+     * Constructor de compatibilidad para pruebas unitarias de presupuestos que inyectan
+     * el repositorio de logs y el repositorio de presupuestos de usuario.
+     *
+     * @param requestLogRepository repositorio de persistencia de registros de peticiones
+     * @param userBudgetRepository repositorio de persistencia de presupuestos de usuario
+     */
+    public RouterService(
+            RequestLogRepository requestLogRepository,
+            UserBudgetRepository userBudgetRepository) {
+        this(requestLogRepository, userBudgetRepository, null, "");
+    }
+
+    /**
+     * Constructor de compatibilidad para pruebas unitarias que inyectan el repositorio de logs,
+     * el cliente HTTP de Google Gemini y la clave de API de servidor.
+     *
+     * @param requestLogRepository repositorio de persistencia de registros de peticiones
+     * @param geminiRestClient     cliente HTTP para invocar la API de Google Gemini
+     * @param serverApiKey         clave de API configurada en el servidor ({@code airouter.gemini.api-key})
+     */
+    public RouterService(
+            RequestLogRepository requestLogRepository,
+            GeminiRestClient geminiRestClient,
+            String serverApiKey) {
+        this(requestLogRepository, null, geminiRestClient, serverApiKey);
+    }
+
+    /**
+     * Constructor principal empleado por Spring para inyectar los repositorios JPA, el cliente HTTP
      * de Google Gemini y la clave de API opcional de servidor.
      *
      * @param requestLogRepository repositorio de persistencia de registros de peticiones
+     * @param userBudgetRepository repositorio de persistencia de límites presupuestarios por usuario
      * @param geminiRestClient     cliente HTTP para invocar la API de Google Gemini
      * @param serverApiKey         clave de API configurada en el servidor ({@code airouter.gemini.api-key})
      */
     @Autowired
     public RouterService(
             RequestLogRepository requestLogRepository,
+            UserBudgetRepository userBudgetRepository,
             GeminiRestClient geminiRestClient,
             @Value("${airouter.gemini.api-key:}") String serverApiKey) {
         this.requestLogRepository = requestLogRepository;
+        this.userBudgetRepository = userBudgetRepository;
         this.geminiRestClient = geminiRestClient;
         this.serverApiKey = serverApiKey != null ? serverApiKey.trim() : "";
+    }
+
+    /**
+     * Permite asignar o reemplazar el repositorio de presupuestos en pruebas unitarias.
+     *
+     * @param userBudgetRepository instancia del repositorio de presupuestos de usuario
+     */
+    public void setUserBudgetRepository(UserBudgetRepository userBudgetRepository) {
+        this.userBudgetRepository = userBudgetRepository;
     }
 
     /**
@@ -151,7 +232,8 @@ public class RouterService {
      *
      * @param request DTO con el identificador de usuario y el texto del prompt
      * @return DTO {@link RouterResponse} con la decisión de enrutamiento y la respuesta obtenida
-     * @throws InvalidPromptException si la petición, el usuario o el prompt son inválidos
+     * @throws InvalidPromptException  si la petición, el usuario o el prompt son inválidos
+     * @throws BudgetExceededException si el usuario ha alcanzado el 100% de su presupuesto máximo
      */
     @Transactional
     public RouterResponse routePrompt(PromptRequest request) {
@@ -159,14 +241,16 @@ public class RouterService {
     }
 
     /**
-     * Evalúa un prompt de entrada, estima sus tokens, selecciona el modelo LLM óptimo,
+     * Evalúa un prompt de entrada, verifica el cortafuegos presupuestario del usuario (bloqueo al 100%
+     * o degradación automática al 80%), estima sus tokens, selecciona el modelo LLM óptimo,
      * ejecuta la inferencia en modo híbrido (1º BYOK del cliente, 2º clave del servidor,
      * 3º fallback resiliente a simulación), persiste el registro y devuelve la respuesta.
      *
      * @param request      DTO con el identificador de usuario y el texto del prompt
      * @param clientApiKey clave de API opcional proporcionada por el cliente en la cabecera {@code X-API-Key}
      * @return DTO {@link RouterResponse} con la decisión de enrutamiento y la respuesta real o simulada
-     * @throws InvalidPromptException si la petición, el usuario o el prompt son inválidos
+     * @throws InvalidPromptException  si la petición, el usuario o el prompt son inválidos
+     * @throws BudgetExceededException si el usuario ha alcanzado o superado el 100% de su presupuesto configurado
      */
     @Transactional
     public RouterResponse routePrompt(PromptRequest request, String clientApiKey) {
@@ -176,7 +260,8 @@ public class RouterService {
         String promptContent = request.prompt();
 
         int tokensEstimated = estimateTokens(promptContent);
-        String selectedModel = selectModel(promptContent, tokensEstimated);
+        String initialModel = selectModel(promptContent, tokensEstimated);
+        String selectedModel = applyBudgetFirewallAndSelectModel(normalizedUserId, initialModel);
 
         log.info("Enrutando petición del usuario '{}' [tokens estimados: {}] -> modelo seleccionado: {}",
                 normalizedUserId, tokensEstimated, selectedModel);
@@ -201,6 +286,236 @@ public class RouterService {
                 finalResponseText,
                 savedEntity.getCreatedAt()
         );
+    }
+
+    /**
+     * Consulta el estado presupuestario actual de un usuario, calculando su gasto acumulado en USD,
+     * saldo restante, porcentaje de uso y estado operativo del cortafuegos FinOps.
+     *
+     * <p>Si el usuario aún no tiene un límite presupuestario registrado en base de datos, devuelve
+     * el estado {@link #BUDGET_STATUS_UNLIMITED} con {@code maxBudgetUsd = null} y {@code remainingBudgetUsd = null}.</p>
+     *
+     * @param userId identificador del usuario a consultar
+     * @return DTO {@link UserBudgetResponse} con el estado presupuestario detallado
+     * @throws InvalidPromptException si el identificador de usuario es nulo, está en blanco o supera 120 caracteres
+     */
+    @Transactional(readOnly = true)
+    public UserBudgetResponse getUserBudget(String userId) {
+        String cleanedUserId = validateAndTrimBudgetUserId(userId);
+        BigDecimal currentSpendUsd = getStats(cleanedUserId).estimatedActualCostUsd();
+
+        if (userBudgetRepository == null) {
+            return buildUnlimitedBudgetResponse(cleanedUserId, currentSpendUsd);
+        }
+
+        Optional<UserBudget> budgetOpt = userBudgetRepository.findByUserId(cleanedUserId);
+        if (budgetOpt.isEmpty()
+                || budgetOpt.get().getMaxBudgetUsd() == null
+                || budgetOpt.get().getMaxBudgetUsd().compareTo(BigDecimal.ZERO) <= 0) {
+            return buildUnlimitedBudgetResponse(cleanedUserId, currentSpendUsd);
+        }
+
+        return buildActiveBudgetResponse(cleanedUserId, budgetOpt.get(), currentSpendUsd);
+    }
+
+    /**
+     * Crea, actualiza o elimina el límite presupuestario (Hard Budget Cap) de un usuario.
+     *
+     * <p>Si {@code request} es nulo, {@code maxBudgetUsd} es nulo o {@code <= 0}, se elimina cualquier
+     * límite existente para el usuario y se devuelve el estado {@link #BUDGET_STATUS_UNLIMITED}.
+     * En caso contrario, se persiste el límite escalado a 6 decimales junto con la preferencia
+     * {@code autoDowngradeEnabled} (por defecto {@code true} si se recibe nula).</p>
+     *
+     * @param userId  identificador del usuario cuyo presupuesto se desea configurar
+     * @param request DTO con el presupuesto máximo en USD y el indicador de auto-downgrade
+     * @return DTO {@link UserBudgetResponse} con el estado actualizado del presupuesto
+     * @throws InvalidPromptException si el identificador de usuario es nulo, está en blanco o supera 120 caracteres
+     */
+    @Transactional
+    public UserBudgetResponse updateUserBudget(String userId, UserBudgetRequest request) {
+        String cleanedUserId = validateAndTrimBudgetUserId(userId);
+        BigDecimal currentSpendUsd = getStats(cleanedUserId).estimatedActualCostUsd();
+
+        if (request == null
+                || request.maxBudgetUsd() == null
+                || request.maxBudgetUsd().compareTo(BigDecimal.ZERO) <= 0) {
+            if (userBudgetRepository != null) {
+                userBudgetRepository.findByUserId(cleanedUserId).ifPresent(userBudgetRepository::delete);
+            }
+            return buildUnlimitedBudgetResponse(cleanedUserId, currentSpendUsd);
+        }
+
+        BigDecimal scaledMaxBudget = request.maxBudgetUsd().setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+        boolean autoDowngrade = request.autoDowngradeEnabled() == null || request.autoDowngradeEnabled();
+
+        if (userBudgetRepository == null) {
+            UserBudget transientBudget = UserBudget.builder()
+                    .userId(cleanedUserId)
+                    .maxBudgetUsd(scaledMaxBudget)
+                    .autoDowngradeEnabled(autoDowngrade)
+                    .updatedAt(LocalDateTime.now())
+                    .build();
+            return buildActiveBudgetResponse(cleanedUserId, transientBudget, currentSpendUsd);
+        }
+
+        UserBudget budgetEntity = userBudgetRepository.findByUserId(cleanedUserId)
+                .orElseGet(() -> UserBudget.builder()
+                        .userId(cleanedUserId)
+                        .build());
+
+        budgetEntity.setMaxBudgetUsd(scaledMaxBudget);
+        budgetEntity.setAutoDowngradeEnabled(autoDowngrade);
+        budgetEntity.setUpdatedAt(LocalDateTime.now());
+
+        UserBudget savedBudget = userBudgetRepository.save(budgetEntity);
+        return buildActiveBudgetResponse(cleanedUserId, savedBudget, currentSpendUsd);
+    }
+
+    /**
+     * Evalúa las reglas del cortafuegos presupuestario antes de procesar un prompt:
+     * <ul>
+     *   <li><b>Regla del 100% (Hard Cap):</b> Si {@code currentSpendUsd >= maxBudgetUsd}, lanza
+     *       {@link BudgetExceededException} (HTTP 402 Payment Required).</li>
+     *   <li><b>Regla del 80% (Auto-Downgrade):</b> Si el consumo alcanza o supera el 80% y
+     *       {@code autoDowngradeEnabled} es {@code true}, fuerza el modelo {@link #MODEL_FAST}.</li>
+     * </ul>
+     *
+     * @param userId       identificador normalizado del usuario
+     * @param initialModel modelo inicialmente seleccionado por la heurística de complejidad
+     * @return modelo definitivo a utilizar ({@code initialModel} o {@link #MODEL_FAST} si aplica auto-downgrade)
+     * @throws BudgetExceededException si el gasto acumulado iguala o supera el presupuesto máximo
+     */
+    private String applyBudgetFirewallAndSelectModel(String userId, String initialModel) {
+        if (userBudgetRepository == null) {
+            return initialModel;
+        }
+
+        Optional<UserBudget> budgetOpt = userBudgetRepository.findByUserId(userId);
+        if (budgetOpt.isEmpty()
+                || budgetOpt.get().getMaxBudgetUsd() == null
+                || budgetOpt.get().getMaxBudgetUsd().compareTo(BigDecimal.ZERO) <= 0) {
+            return initialModel;
+        }
+
+        UserBudget budget = budgetOpt.get();
+        BigDecimal maxBudgetUsd = budget.getMaxBudgetUsd().setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+        BigDecimal currentSpendUsd = getStats(userId).estimatedActualCostUsd();
+
+        if (currentSpendUsd.compareTo(maxBudgetUsd) >= 0) {
+            log.warn("Cortafuegos FinOps [HARD CAP 100%]: Usuario '{}' bloqueado (gasto actual: ${} USD / límite: ${} USD).",
+                    userId, currentSpendUsd.toPlainString(), maxBudgetUsd.toPlainString());
+            throw new BudgetExceededException(userId, currentSpendUsd, maxBudgetUsd);
+        }
+
+        double usagePercentage = calculateBudgetUsagePercentage(currentSpendUsd, maxBudgetUsd);
+        boolean autoDowngrade = budget.getAutoDowngradeEnabled() == null || budget.getAutoDowngradeEnabled();
+
+        if (usagePercentage >= BUDGET_DOWNGRADE_THRESHOLD_PERCENT && autoDowngrade) {
+            if (!MODEL_FAST.equals(initialModel)) {
+                log.info("Cortafuegos FinOps [AUTO-DOWNGRADE >= 80%]: Usuario '{}' al {}% de su presupuesto. Degradando modelo '{}' -> '{}'.",
+                        userId, usagePercentage, initialModel, MODEL_FAST);
+            }
+            return MODEL_FAST;
+        }
+
+        return initialModel;
+    }
+
+    /**
+     * Valida y recorta el identificador de usuario recibido en las operaciones de presupuesto.
+     *
+     * @param userId identificador de usuario a validar
+     * @return identificador de usuario sin espacios laterales
+     * @throws InvalidPromptException si el identificador es nulo, vacío o supera {@link #MAX_BUDGET_USER_ID_LENGTH} caracteres
+     */
+    private String validateAndTrimBudgetUserId(String userId) {
+        if (userId == null || userId.isBlank()) {
+            throw new InvalidPromptException("El identificador de usuario (userId) es obligatorio y no puede estar en blanco.");
+        }
+        String trimmed = userId.trim();
+        if (trimmed.length() > MAX_BUDGET_USER_ID_LENGTH) {
+            throw new InvalidPromptException(
+                    "El identificador de usuario (userId) no puede superar los " + MAX_BUDGET_USER_ID_LENGTH + " caracteres.");
+        }
+        return trimmed;
+    }
+
+    /**
+     * Construye la respuesta presupuestaria para un usuario sin límite configurado ({@code UNLIMITED}).
+     *
+     * @param userId          identificador del usuario
+     * @param currentSpendUsd gasto acumulado actual en USD
+     * @return DTO {@link UserBudgetResponse} en estado {@link #BUDGET_STATUS_UNLIMITED}
+     */
+    private UserBudgetResponse buildUnlimitedBudgetResponse(String userId, BigDecimal currentSpendUsd) {
+        return new UserBudgetResponse(
+                userId,
+                null,
+                currentSpendUsd.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP),
+                null,
+                0.0,
+                true,
+                BUDGET_STATUS_UNLIMITED
+        );
+    }
+
+    /**
+     * Construye la respuesta presupuestaria para un usuario con límite activo ({@code maxBudgetUsd > 0}).
+     *
+     * @param userId          identificador del usuario
+     * @param budget          entidad {@link UserBudget} con el límite y configuración del usuario
+     * @param currentSpendUsd gasto acumulado actual en USD
+     * @return DTO {@link UserBudgetResponse} con saldo restante, porcentaje y estado calculados
+     */
+    private UserBudgetResponse buildActiveBudgetResponse(
+            String userId,
+            UserBudget budget,
+            BigDecimal currentSpendUsd) {
+        BigDecimal scaledSpend = currentSpendUsd.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+        BigDecimal scaledMaxBudget = budget.getMaxBudgetUsd().setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+        BigDecimal remainingBudgetUsd = scaledMaxBudget.subtract(scaledSpend)
+                .max(BigDecimal.ZERO)
+                .setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+
+        double usagePercentage = calculateBudgetUsagePercentage(scaledSpend, scaledMaxBudget);
+        boolean autoDowngrade = budget.getAutoDowngradeEnabled() == null || budget.getAutoDowngradeEnabled();
+
+        String status;
+        if (scaledSpend.compareTo(scaledMaxBudget) >= 0) {
+            status = BUDGET_STATUS_EXCEEDED_100;
+        } else if (usagePercentage >= BUDGET_DOWNGRADE_THRESHOLD_PERCENT && autoDowngrade) {
+            status = BUDGET_STATUS_WARNING_80;
+        } else {
+            status = BUDGET_STATUS_OK;
+        }
+
+        return new UserBudgetResponse(
+                userId,
+                scaledMaxBudget,
+                scaledSpend,
+                remainingBudgetUsd,
+                usagePercentage,
+                autoDowngrade,
+                status
+        );
+    }
+
+    /**
+     * Calcula el porcentaje de consumo presupuestario {@code (currentSpendUsd / maxBudgetUsd) * 100}
+     * redondeado a 2 decimales.
+     *
+     * @param currentSpendUsd gasto acumulado actual en USD
+     * @param maxBudgetUsd    presupuesto máximo en USD (debe ser mayor que cero)
+     * @return porcentaje de uso con 2 decimales
+     */
+    private double calculateBudgetUsagePercentage(BigDecimal currentSpendUsd, BigDecimal maxBudgetUsd) {
+        if (maxBudgetUsd == null || maxBudgetUsd.compareTo(BigDecimal.ZERO) <= 0) {
+            return 0.0;
+        }
+        return currentSpendUsd.multiply(ONE_HUNDRED)
+                .divide(maxBudgetUsd, INTERNAL_CALCULATION_SCALE, RoundingMode.HALF_UP)
+                .setScale(PERCENTAGE_DECIMAL_SCALE, RoundingMode.HALF_UP)
+                .doubleValue();
     }
 
     /**

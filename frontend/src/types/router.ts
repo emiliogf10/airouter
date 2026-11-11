@@ -6,6 +6,49 @@
 export type CurrencyCode = 'EUR' | 'USD';
 
 /**
+ * Estado operativo del cortafuegos presupuestario (FinOps) para un usuario:
+ * - `'UNLIMITED'`: El usuario no tiene un límite presupuestario activo.
+ * - `'OK'`: Consumo por debajo del umbral preventivo del 80%.
+ * - `'WARNING_80_DOWNGRADE'`: Consumo entre el 80% y el 99.99% con degradación automática a modelo económico (`gemini-2.5-flash`).
+ * - `'EXCEEDED_100_BLOCKED'`: Consumo igual o superior al 100% del presupuesto; peticiones bloqueadas con HTTP 402.
+ */
+export type BudgetStatus =
+  | 'UNLIMITED'
+  | 'OK'
+  | 'WARNING_80_DOWNGRADE'
+  | 'EXCEEDED_100_BLOCKED';
+
+/**
+ * DTO de entrada para configurar o actualizar el límite de presupuesto de un usuario (`PUT /api/v1/router/budget/{userId}`).
+ */
+export interface UserBudgetRequest {
+  /** Presupuesto máximo permitido en USD (`null` o `<= 0` para eliminar el límite). */
+  maxBudgetUsd: number | null;
+  /** Indica si se debe forzar el modelo económico (`gemini-2.5-flash`) al alcanzar el 80% del presupuesto. */
+  autoDowngradeEnabled: boolean;
+}
+
+/**
+ * DTO de salida con el estado actual del presupuesto y gasto acumulado de un usuario (`GET /api/v1/router/budget/{userId}`).
+ */
+export interface UserBudgetResponse {
+  /** Identificador único del usuario al que aplica el presupuesto. */
+  userId: string;
+  /** Límite máximo de gasto configurado en USD (`null` si es ilimitado). */
+  maxBudgetUsd: number | null;
+  /** Gasto real acumulado por el usuario en USD. */
+  currentSpendUsd: number;
+  /** Saldo disponible restante en USD (`null` si el presupuesto es ilimitado). */
+  remainingBudgetUsd: number | null;
+  /** Porcentaje de consumo respecto al límite configurado (`0.0` a `100.0+`). */
+  usagePercentage: number;
+  /** Indica si la degradación automática al 80% está habilitada. */
+  autoDowngradeEnabled: boolean;
+  /** Estado calculado del cortafuegos presupuestario. */
+  status: BudgetStatus;
+}
+
+/**
  * DTO de entrada que representa una solicitud de evaluación y enrutamiento de un prompt hacia el backend.
  */
 export interface PromptRequest {
@@ -30,7 +73,7 @@ export interface RouterResponse {
   modelRouted: string;
   /** Cantidad estimada de tokens calculada para el prompt. */
   tokensEstimated: number;
-  /** Respuesta simulada generada por el motor de enrutamiento. */
+  /** Respuesta simulada o real generada tras el enrutamiento. */
   simulatedResponse: string | null;
   /** Fecha y hora ISO en la que se registró la petición. */
   createdAt: string;
@@ -64,8 +107,8 @@ export interface RouterStatsResponse {
 }
 
 /**
- * DTO de respuesta estandarizado devuelto por el backend cuando ocurre un error de validación (HTTP 400)
- * o de límite de tasa (HTTP 429 Too Many Requests).
+ * DTO de respuesta estandarizado devuelto por el backend cuando ocurre un error de validación (HTTP 400),
+ * bloqueo presupuestario (HTTP 402 Payment Required) o límite de tasa (HTTP 429 Too Many Requests).
  */
 export interface ErrorResponse {
   /** Descripción legible en español del error ocurrido. */

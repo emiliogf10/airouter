@@ -512,4 +512,148 @@ describe('AI Cost Router Dashboard - Pruebas de Integración', () => {
       expect(screen.getByTestId('savings-percentage-badge')).toHaveTextContent('88.0%');
     });
   });
+
+  /**
+   * Verifica la interacción con `BudgetControlCard` (`data-testid="budget-control-card"`):
+   * visualización del estado inicial ilimitado, introducción de un nuevo límite en
+   * `data-testid="budget-limit-input"` y guardado con `data-testid="budget-save-button"`
+   * invocando `PUT /api/v1/router/budget/demo-user` y actualizando `data-testid="budget-status-badge"`.
+   */
+  it('permite configurar un límite presupuestario FinOps en BudgetControlCard y actualiza el estado del usuario', async () => {
+    let putUrlCalled = '';
+    let putBodyParsed: { maxBudgetUsd: number | null; autoDowngradeEnabled: boolean } | null = null;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/budget/') && init?.method === 'PUT') {
+        putUrlCalled = url;
+        putBodyParsed = JSON.parse(String(init.body)) as {
+          maxBudgetUsd: number | null;
+          autoDowngradeEnabled: boolean;
+        };
+        return new Response(
+          JSON.stringify({
+            userId: 'demo-user',
+            maxBudgetUsd: 0.001,
+            currentSpendUsd: 0.00085,
+            remainingBudgetUsd: 0.00015,
+            usagePercentage: 85.0,
+            autoDowngradeEnabled: true,
+            status: 'WARNING_80_DOWNGRADE',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+
+      if (url.includes('/budget/')) {
+        return new Response(
+          JSON.stringify({
+            userId: 'demo-user',
+            maxBudgetUsd: null,
+            currentSpendUsd: 0.00014,
+            remainingBudgetUsd: null,
+            usagePercentage: 0.0,
+            autoDowngradeEnabled: true,
+            status: 'UNLIMITED',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+
+      if (url.includes('/stats')) {
+        return new Response(JSON.stringify(MOCK_GLOBAL_STATS), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify(MOCK_INITIAL_LOGS), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('budget-control-card')).toBeInTheDocument();
+      expect(screen.getByTestId('budget-status-badge')).toHaveTextContent('Sin límite (Ilimitado)');
+    });
+
+    const limitInput = screen.getByTestId('budget-limit-input');
+    await userEvent.clear(limitInput);
+    await userEvent.type(limitInput, '0.00092');
+
+    await userEvent.click(screen.getByTestId('budget-save-button'));
+
+    await waitFor(() => {
+      expect(putUrlCalled).toBe('/api/v1/router/budget/demo-user');
+      expect(putBodyParsed).toEqual({
+        maxBudgetUsd: 0.001,
+        autoDowngradeEnabled: true,
+      });
+      expect(screen.getByTestId('budget-status-badge')).toHaveTextContent(
+        'Modo Ahorro Forzado (>=80% → Flash)',
+      );
+      expect(screen.getByTestId('budget-warning-banner')).toBeInTheDocument();
+    });
+  });
+
+  /**
+   * Verifica que cuando `POST /api/v1/router/prompt` responde con HTTP 402 Payment Required,
+   * `PromptPlayground` muestra la alerta `data-testid="playground-error-alert"` indicando
+   * `"Cortafuegos Presupuestario Activado (HTTP 402 Payment Required)"`.
+   */
+  it('muestra la alerta del Cortafuegos Presupuestario cuando POST /prompt devuelve HTTP 402 Payment Required', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/prompt') && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            message:
+              "Cortafuegos presupuestario activado: el usuario 'demo-user' ha alcanzado el 100% de su presupuesto máximo ($0.001000 USD consumidos de $0.001000 USD).",
+            timestamp: '2026-10-20T23:00:00',
+          }),
+          {
+            status: 402,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      }
+
+      if (url.includes('/stats')) {
+        return new Response(JSON.stringify(MOCK_GLOBAL_STATS), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify(MOCK_INITIAL_LOGS), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('request-logs-table')).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByTestId('preset-pro-button'));
+    await userEvent.click(screen.getByTestId('submit-prompt-button'));
+
+    await waitFor(() => {
+      const alertBox = screen.getByTestId('playground-error-alert');
+      expect(alertBox).toBeInTheDocument();
+      expect(alertBox).toHaveTextContent(
+        'Cortafuegos Presupuestario Activado (HTTP 402 Payment Required)',
+      );
+      expect(alertBox).toHaveTextContent(
+        "Cortafuegos presupuestario activado: el usuario 'demo-user' ha alcanzado el 100% de su presupuesto máximo",
+      );
+    });
+  });
 });

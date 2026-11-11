@@ -13,12 +13,17 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.tuproyecto.airouter.clients.GeminiRestClient;
+import com.tuproyecto.airouter.exceptions.BudgetExceededException;
 import com.tuproyecto.airouter.exceptions.InvalidPromptException;
 import com.tuproyecto.airouter.models.dto.PromptRequest;
 import com.tuproyecto.airouter.models.dto.RouterResponse;
 import com.tuproyecto.airouter.models.dto.RouterStatsResponse;
+import com.tuproyecto.airouter.models.dto.UserBudgetRequest;
+import com.tuproyecto.airouter.models.dto.UserBudgetResponse;
 import com.tuproyecto.airouter.models.entities.RequestLog;
+import com.tuproyecto.airouter.models.entities.UserBudget;
 import com.tuproyecto.airouter.repositories.RequestLogRepository;
+import com.tuproyecto.airouter.repositories.UserBudgetRepository;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Collections;
@@ -552,5 +557,167 @@ class RouterServiceTest {
                 "Consulta sencilla",
                 "AIzaSyExpiredKey"
         );
+    }
+
+    /**
+     * Verifica la gestión del ciclo de vida del presupuesto FinOps ({@link RouterService#getUserBudget(String)}
+     * y {@link RouterService#updateUserBudget(String, UserBudgetRequest)}):
+     * un usuario sin presupuesto devuelve {@code UNLIMITED}, al fijar un importe positivo pasa a {@code OK},
+     * y al enviar {@code null} o {@code 0} se elimina el límite volviendo a {@code UNLIMITED}.
+     */
+    @Test
+    @DisplayName("FinOps Presupuesto: Debe devolver UNLIMITED sin límite, pasar a OK al configurar y volver a UNLIMITED al limpiar")
+    void shouldManageUserBudgetLifecycleFromUnlimitedToOkAndBackToUnlimited() {
+        UserBudgetRepository mockBudgetRepo = mock(UserBudgetRepository.class);
+        RouterService finopsService = new RouterService(requestLogRepository, mockBudgetRepo);
+
+        when(requestLogRepository.findByUserIdOrderByCreatedAtDesc("finops-user"))
+                .thenReturn(Collections.emptyList());
+        when(mockBudgetRepo.findByUserId("finops-user")).thenReturn(Optional.empty());
+
+        // 1. Usuario sin presupuesto -> UNLIMITED
+        UserBudgetResponse initialBudget = finopsService.getUserBudget("  finops-user  ");
+        assertEquals("finops-user", initialBudget.userId());
+        assertEquals(RouterService.BUDGET_STATUS_UNLIMITED, initialBudget.status());
+        assertEquals(null, initialBudget.maxBudgetUsd());
+        assertEquals(new BigDecimal("0.000000"), initialBudget.currentSpendUsd());
+
+        // 2. Actualizar presupuesto con importe positivo -> OK
+        when(mockBudgetRepo.save(any(UserBudget.class))).thenAnswer(invocation -> {
+            UserBudget saved = invocation.getArgument(0);
+            saved.setId(UUID.randomUUID());
+            return saved;
+        });
+
+        UserBudgetResponse updatedOk = finopsService.updateUserBudget(
+                "finops-user",
+                new UserBudgetRequest(new BigDecimal("0.010000"), true)
+        );
+        assertEquals(RouterService.BUDGET_STATUS_OK, updatedOk.status());
+        assertEquals(new BigDecimal("0.010000"), updatedOk.maxBudgetUsd());
+        assertEquals(new BigDecimal("0.010000"), updatedOk.remainingBudgetUsd());
+        assertEquals(0.0, updatedOk.usagePercentage());
+        assertTrue(updatedOk.autoDowngradeEnabled());
+
+        // 3. Limpiar presupuesto enviando 0 -> elimina el registro y vuelve a UNLIMITED
+        UserBudget existingEntity = UserBudget.builder()
+                .id(UUID.randomUUID())
+                .userId("finops-user")
+                .maxBudgetUsd(new BigDecimal("0.010000"))
+                .autoDowngradeEnabled(true)
+                .build();
+        when(mockBudgetRepo.findByUserId("finops-user")).thenReturn(Optional.of(existingEntity));
+
+        UserBudgetResponse clearedBudget = finopsService.updateUserBudget(
+                "finops-user",
+                new UserBudgetRequest(BigDecimal.ZERO, true)
+        );
+        assertEquals(RouterService.BUDGET_STATUS_UNLIMITED, clearedBudget.status());
+        assertEquals(null, clearedBudget.maxBudgetUsd());
+        verify(mockBudgetRepo, times(1)).delete(existingEntity);
+    }
+
+    /**
+     * Verifica el umbral del 80% ({@code WARNING_80_DOWNGRADE} — Auto-Downgrade a Flash):
+     * cuando el gasto acumulado del usuario se encuentra entre el {@code 80%} y el {@code < 100%}
+     * de su {@code maxBudgetUsd} y {@code autoDowngradeEnabled == true}, un prompt complejo
+     * con la palabra clave {@code "arquitectura"} (que normalmente iría a {@code gemini-2.5-pro})
+     * es degradado automáticamente a {@code gemini-2.5-flash}.
+     */
+    @Test
+    @DisplayName("FinOps Umbral 80% (Auto-Downgrade): Debe degradar automáticamente un prompt complejo de Pro a Flash cuando el consumo es >= 80%")
+    void shouldAutoDowngradeComplexPromptToFastModelWhenBudgetUsageReaches80Percent() {
+        UserBudgetRepository mockBudgetRepo = mock(UserBudgetRepository.class);
+        RouterService finopsService = new RouterService(requestLogRepository, mockBudgetRepo);
+
+        // 700 tokens en gemini-2.5-pro cuestan $0.000875 USD (87.5% de un presupuesto máximo de $0.001000 USD)
+        RequestLog previousLog = RequestLog.builder()
+                .id(UUID.randomUUID())
+                .userId("downgrade-user")
+                .promptContent("Petición previa")
+                .modelRouted(RouterService.MODEL_PRO)
+                .tokensEstimated(700)
+                .createdAt(LocalDateTime.now().minusMinutes(5))
+                .build();
+
+        UserBudget activeBudget = UserBudget.builder()
+                .id(UUID.randomUUID())
+                .userId("downgrade-user")
+                .maxBudgetUsd(new BigDecimal("0.001000"))
+                .autoDowngradeEnabled(true)
+                .updatedAt(LocalDateTime.now())
+                .build();
+
+        when(requestLogRepository.findByUserIdOrderByCreatedAtDesc("downgrade-user"))
+                .thenReturn(List.of(previousLog));
+        when(mockBudgetRepo.findByUserId("downgrade-user"))
+                .thenReturn(Optional.of(activeBudget));
+        when(requestLogRepository.save(any(RequestLog.class))).thenAnswer(invocation -> {
+            RequestLog arg = invocation.getArgument(0);
+            arg.setId(UUID.randomUUID());
+            arg.setCreatedAt(LocalDateTime.now());
+            return arg;
+        });
+
+        UserBudgetResponse budgetState = finopsService.getUserBudget("downgrade-user");
+        assertEquals(RouterService.BUDGET_STATUS_WARNING_80, budgetState.status());
+        assertEquals(87.5, budgetState.usagePercentage());
+
+        // Prompt complejo con "arquitectura" que iría a gemini-2.5-pro, pero se degrada a gemini-2.5-flash
+        RouterResponse routed = finopsService.routePrompt(
+                new PromptRequest("downgrade-user", "Necesito diseñar una arquitectura de microservicios")
+        );
+
+        assertEquals(RouterService.MODEL_FAST, routed.modelRouted());
+    }
+
+    /**
+     * Verifica el umbral del 100% ({@code EXCEEDED_100_BLOCKED} — Cortafuegos Duro):
+     * cuando el gasto acumulado del usuario es {@code >= 100%} de su {@code maxBudgetUsd},
+     * {@link RouterService#routePrompt(PromptRequest)} lanza {@link BudgetExceededException}
+     * sin persistir ningún nuevo registro en {@link RequestLogRepository}.
+     */
+    @Test
+    @DisplayName("FinOps Umbral 100% (Hard Cap): Debe lanzar BudgetExceededException y no guardar en BD cuando el presupuesto se ha agotado")
+    void shouldThrowBudgetExceededExceptionAndNotSaveLogWhenBudgetIs100PercentExhausted() {
+        UserBudgetRepository mockBudgetRepo = mock(UserBudgetRepository.class);
+        RouterService finopsService = new RouterService(requestLogRepository, mockBudgetRepo);
+
+        // 800 tokens en gemini-2.5-pro cuestan $0.001000 USD (100% de $0.001000 USD)
+        RequestLog exhaustedLog = RequestLog.builder()
+                .id(UUID.randomUUID())
+                .userId("blocked-user")
+                .promptContent("Petición que agotó el saldo")
+                .modelRouted(RouterService.MODEL_PRO)
+                .tokensEstimated(800)
+                .createdAt(LocalDateTime.now().minusMinutes(2))
+                .build();
+
+        UserBudget exhaustedBudget = UserBudget.builder()
+                .id(UUID.randomUUID())
+                .userId("blocked-user")
+                .maxBudgetUsd(new BigDecimal("0.001000"))
+                .autoDowngradeEnabled(true)
+                .updatedAt(LocalDateTime.now())
+                .build();
+
+        when(requestLogRepository.findByUserIdOrderByCreatedAtDesc("blocked-user"))
+                .thenReturn(List.of(exhaustedLog));
+        when(mockBudgetRepo.findByUserId("blocked-user"))
+                .thenReturn(Optional.of(exhaustedBudget));
+
+        UserBudgetResponse budgetState = finopsService.getUserBudget("blocked-user");
+        assertEquals(RouterService.BUDGET_STATUS_EXCEEDED_100, budgetState.status());
+        assertEquals(100.0, budgetState.usagePercentage());
+
+        BudgetExceededException exception = assertThrows(
+                BudgetExceededException.class,
+                () -> finopsService.routePrompt(new PromptRequest("blocked-user", "Hola mundo"))
+        );
+
+        assertEquals("blocked-user", exception.getUserId());
+        assertEquals(new BigDecimal("0.001000"), exception.getCurrentSpendUsd());
+        assertEquals(new BigDecimal("0.001000"), exception.getMaxBudgetUsd());
+        verify(requestLogRepository, never()).save(any(RequestLog.class));
     }
 }

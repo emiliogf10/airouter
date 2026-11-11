@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { convertFromUsd, formatCurrency, USD_TO_EUR_RATE } from '../utils/currency';
+import { convertFromUsd, convertToUsd, formatCurrency, USD_TO_EUR_RATE } from '../utils/currency';
 
 /**
  * Suite de pruebas unitarias para las utilidades de conversión y formateo monetario (`currency.ts`).
@@ -60,5 +60,16 @@ describe('Utilidades de Moneda (currency.ts)', () => {
 
     expect(formatCurrency(1.25, 'EUR')).toBe('1,150000 €');
     expect(formatCurrency(1.25, 'USD')).toBe('$1.250000');
+  });
+
+  /**
+   * Verifica la función inversa `convertToUsd` que convierte importes introducidos por el usuario
+   * en la divisa activa (`'EUR'` dividiendo por `0.92`, o `'USD'` manteniendo el importe) a USD con 6 decimales.
+   */
+  it('convierte importes de EUR a USD dividiendo por 0.92 y mantiene USD intacto con 6 decimales', () => {
+    expect(convertToUsd(0.92, 'EUR')).toBe(1);
+    expect(convertToUsd(0.00092, 'EUR')).toBe(0.001);
+    expect(convertToUsd(1.25, 'USD')).toBe(1.25);
+    expect(convertToUsd(Number.NaN, 'EUR')).toBe(0);
   });
 });

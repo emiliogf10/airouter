@@ -62,6 +62,7 @@ El esquema de base de datos está gobernado exclusivamente por **Flyway** median
 
 ### Migraciones Activas
 * **`V1__create_request_logs_table.sql`**: Crea la tabla `request_logs` (`id`, `user_id`, `prompt_content`, `model_routed`, `tokens_estimated`, `created_at`) y los índices B-Tree de alto rendimiento (`idx_request_logs_user_id`, `idx_request_logs_created_at`, `idx_request_logs_model_routed`).
+* **`V2__create_user_budgets_table.sql`**: Crea la tabla `user_budgets` (`id`, `user_id`, `max_budget_usd`, `auto_downgrade_enabled`, `updated_at`) con restricción única e índice B-Tree sobre `user_id` para el cortafuegos presupuestario FinOps.
 
 ### Acceso a la Consola H2 (Desarrollo)
 Con el backend en ejecución, puedes inspeccionar la base de datos en memoria desde el navegador:
@@ -131,6 +132,11 @@ Calcula y devuelve las estadísticas agregadas de uso de tokens, distribución d
   "savingsPercentage": 44.0
 }
 ```
+
+### 4. Cortafuegos Presupuestario por Usuario — FinOps (`GET` / `PUT /api/v1/router/budget/{userId}`)
+Permite consultar y configurar el límite de gasto máximo (`maxBudgetUsd`) para un usuario:
+* **Umbral del 80% (`WARNING_80_DOWNGRADE`):** Si `autoDowngradeEnabled` está activo y el usuario alcanza el 80% de su presupuesto, cualquier prompt complejo se degrada automáticamente a **`gemini-2.5-flash`** para proteger su saldo.
+* **Umbral del 100% (`EXCEEDED_100_BLOCKED`):** Al alcanzar el 100% del presupuesto, `POST /api/v1/router/prompt` bloquea nuevas peticiones con **HTTP `402 Payment Required`**.
 
 ---
 

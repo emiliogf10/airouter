@@ -21,6 +21,8 @@ export interface PromptPlaygroundProps {
   onPromptSuccess: (response: RouterResponse) => void;
   /** Contador o señal externa opcional para cargar automáticamente un prompt de ejemplo desde otros componentes. */
   quickTrySignal?: number;
+  /** Callback opcional invocado cuando cambia el usuario del simulador o se produce un bloqueo presupuestario (402). */
+  onUserOrBudgetActivity?: (userId: string) => void;
 }
 
 /** Ejemplo predefinido de baja complejidad para activar el enrutamiento hacia `gemini-2.5-flash`. */
@@ -37,10 +39,8 @@ const SIMULATION_RESPONSE_PREFIX = '[Simulación AI Cost Router]';
 /**
  * Consola interactiva (`PromptPlayground`) con diseño minimalista inspirado en Vercel / shadcn/ui
  * para evaluar en vivo las reglas de negocio del enrutador inteligente (`POST /api/v1/router/prompt`).
- * Soporta **Modo Híbrido (BYOK)**:
- * - Si el usuario proporciona su clave de Google AI Studio (`AIzaSy...`) en `X-API-Key`, el Gateway
- *   invoca la API oficial de Google Gemini en tiempo real.
- * - Si se omite la clave, opera automáticamente en **Modo Simulación** sin coste.
+ * Soporta **Modo Híbrido (BYOK)** y manejo específico de alertas para validación (HTTP 400),
+ * **Cortafuegos Presupuestario FinOps (HTTP 402 Payment Required)** y Rate Limiting (HTTP 429).
  *
  * @param props Propiedades del componente.
  * @returns Tarjeta interactiva con formulario de envío y panel de resultado/error.
@@ -48,6 +48,7 @@ const SIMULATION_RESPONSE_PREFIX = '[Simulación AI Cost Router]';
 export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
   onPromptSuccess,
   quickTrySignal = 0,
+  onUserOrBudgetActivity,
 }) => {
   const [userId, setUserId] = useState<string>('demo-user');
   const [apiKey, setApiKey] = useState<string>('');
@@ -95,6 +96,7 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
       );
       setLastResult(result);
       onPromptSuccess(result);
+      onUserOrBudgetActivity?.(trimmedUser);
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorState({
@@ -102,6 +104,9 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
           status: err.status,
           retryAfterSeconds: err.retryAfterSeconds,
         });
+        if (err.status === 402) {
+          onUserOrBudgetActivity?.(trimmedUser);
+        }
       } else if (err instanceof Error) {
         setErrorState({
           message: err.message,
@@ -114,6 +119,22 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  /**
+   * Determina el título de la alerta de error según el código de estado HTTP devuelto.
+   *
+   * @param status Código de estado HTTP opcional.
+   * @returns Título descriptivo en español para la alerta.
+   */
+  const getErrorAlertTitle = (status?: number): string => {
+    if (status === 402) {
+      return 'Cortafuegos Presupuestario Activado (HTTP 402 Payment Required)';
+    }
+    if (status === 429) {
+      return 'Límite de Peticiones Excedido (HTTP 429 Too Many Requests)';
+    }
+    return 'Error en la Petición';
   };
 
   const isProModel = lastResult?.modelRouted === 'gemini-2.5-pro';
@@ -261,7 +282,7 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
         </form>
       </div>
 
-      {/* Alerta de error (HTTP 400 / HTTP 429 Rate Limit) */}
+      {/* Alerta de error (HTTP 400 / HTTP 402 Budget Cap / HTTP 429 Rate Limit) */}
       {errorState && (
         <div
           role="alert"
@@ -270,11 +291,7 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
         >
           <div className="flex items-center gap-2 font-semibold text-rose-300 text-sm">
             <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" aria-hidden="true" />
-            <span>
-              {errorState.status === 429
-                ? 'Límite de Peticiones Excedido (HTTP 429 Too Many Requests)'
-                : 'Error en la Petición'}
-            </span>
+            <span>{getErrorAlertTitle(errorState.status)}</span>
           </div>
           <p className="text-rose-200/90 leading-relaxed">{errorState.message}</p>
           {errorState.retryAfterSeconds !== undefined && (
