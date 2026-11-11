@@ -222,4 +222,36 @@ class RequestLogRepositoryTest {
 
         assertTrue(userBudgetRepository.findByUserId("finops-user-01").isEmpty());
     }
+
+    /**
+     * Verifica la migración Flyway {@code V3__add_cache_hit_to_request_logs.sql}:
+     * comprueba que {@link RequestLog} persiste correctamente {@code cacheHit = false} por defecto
+     * (incluso cuando se envía {@code null}) y {@code cacheHit = true} cuando la petición fue
+     * servida desde la Caché Semántica de Coste Cero.
+     */
+    @Test
+    @DisplayName("Migración V3 (cache_hit): Debe persistir cacheHit=false por defecto y cacheHit=true en aciertos de caché")
+    void shouldPersistCacheHitDefaultFalseAndExplicitTrueInRequestLogs() {
+        RequestLog defaultMissLog = RequestLog.builder()
+                .userId("cache-user-01")
+                .promptContent("¿Cuál es la capital de España?")
+                .modelRouted(RouterService.MODEL_FAST)
+                .tokensEstimated(8)
+                .cacheHit(null)
+                .build();
+
+        RequestLog explicitHitLog = RequestLog.builder()
+                .userId("cache-user-02")
+                .promptContent("  ¿cuál es la   capital de españa? ")
+                .modelRouted(RouterService.MODEL_FAST)
+                .tokensEstimated(8)
+                .cacheHit(Boolean.TRUE)
+                .build();
+
+        RequestLog savedMiss = requestLogRepository.saveAndFlush(defaultMissLog);
+        RequestLog savedHit = requestLogRepository.saveAndFlush(explicitHitLog);
+
+        assertFalse(savedMiss.getCacheHit(), "El campo cacheHit debe persistirse como false cuando es nulo");
+        assertTrue(savedHit.getCacheHit(), "El campo cacheHit debe persistirse como true en un acierto de caché");
+    }
 }

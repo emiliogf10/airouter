@@ -74,13 +74,46 @@ public class RequestLog {
     private LocalDateTime createdAt;
 
     /**
-     * Asigna automáticamente la fecha y hora de creación antes de insertar el registro
-     * en la base de datos si no se ha especificado previamente.
+     * Indica si la petición fue resuelta mediante un acierto en la Caché Semántica
+     * (Zero-Cost Cache) sin invocar al proveedor LLM externo y a coste cero.
+     */
+    @Builder.Default
+    @Column(name = "cache_hit", nullable = false)
+    private Boolean cacheHit = Boolean.FALSE;
+
+    /**
+     * Constructor de compatibilidad sin el indicador explícito de acierto de caché,
+     * inicializando {@code cacheHit} en {@code false}.
+     *
+     * @param id identificador único del registro
+     * @param userId identificador del usuario
+     * @param promptContent contenido íntegro del prompt
+     * @param modelRouted modelo al que se enrutó la petición
+     * @param tokensEstimated cantidad estimada de tokens
+     * @param createdAt fecha y hora de creación
+     */
+    public RequestLog(
+            UUID id,
+            String userId,
+            String promptContent,
+            String modelRouted,
+            Integer tokensEstimated,
+            LocalDateTime createdAt) {
+        this(id, userId, promptContent, modelRouted, tokensEstimated, createdAt, Boolean.FALSE);
+    }
+
+    /**
+     * Asigna automáticamente la fecha y hora de creación y el valor por defecto de
+     * {@code cacheHit} antes de insertar el registro en la base de datos si no se
+     * han especificado previamente.
      */
     @PrePersist
     protected void onCreate() {
         if (this.createdAt == null) {
             this.createdAt = LocalDateTime.now();
+        }
+        if (this.cacheHit == null) {
+            this.cacheHit = Boolean.FALSE;
         }
     }
 

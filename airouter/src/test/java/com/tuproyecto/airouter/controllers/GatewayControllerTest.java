@@ -438,4 +438,51 @@ class GatewayControllerTest {
                 .andExpect(jsonPath("$.message", containsString("Cortafuegos presupuestario activado")))
                 .andExpect(jsonPath("$.timestamp", notNullValue()));
     }
+
+    /**
+     * Verifica de extremo a extremo la Caché Semántica de Prompts en {@code POST /api/v1/router/prompt}
+     * y su impacto en {@code GET /api/v1/router/stats}: al enviar dos veces el mismo prompt con distinta
+     * capitalización y espaciado, la primera petición responde con {@code cacheHit: false}, la segunda
+     * responde con {@code cacheHit: true}, y {@code /stats} refleja {@code cacheHits: 1}.
+     *
+     * @throws Exception si ocurre un error durante las peticiones simuladas
+     */
+    @Test
+    @DisplayName("POST /api/v1/router/prompt debe devolver cacheHit=false en la 1ª petición y cacheHit=true en la 2ª equivalente, reflejando cacheHits=1 en /stats")
+    void shouldReturnCacheHitTrueOnRepeatedNormalizedPromptAndIncrementCacheHitsInStats() throws Exception {
+        String firstPayload = """
+                {
+                    "userId": "cache-e2e-user",
+                    "prompt": "  ¿Qué día   es HOY? "
+                }
+                """;
+        String secondEquivalentPayload = """
+                {
+                    "userId": "cache-e2e-user",
+                    "prompt": "¿qué día es hoy?"
+                }
+                """;
+
+        // 1ª petición -> Cache Miss (cacheHit: false)
+        mockMvc.perform(post("/api/v1/router/prompt")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(firstPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cacheHit", is(false)))
+                .andExpect(jsonPath("$.modelRouted", is(RouterService.MODEL_FAST)));
+
+        // 2ª petición equivalente -> Cache Hit (cacheHit: true)
+        mockMvc.perform(post("/api/v1/router/prompt")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(secondEquivalentPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cacheHit", is(true)))
+                .andExpect(jsonPath("$.modelRouted", is(RouterService.MODEL_FAST)));
+
+        // Verificar en /stats que totalRequests = 2 y cacheHits = 1
+        mockMvc.perform(get("/api/v1/router/stats").param("userId", "cache-e2e-user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalRequests", is(2)))
+                .andExpect(jsonPath("$.cacheHits", is(1)));
+    }
 }

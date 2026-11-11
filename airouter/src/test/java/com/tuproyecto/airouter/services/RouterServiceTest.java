@@ -1,15 +1,18 @@
 package com.tuproyecto.airouter.services;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.tuproyecto.airouter.clients.GeminiRestClient;
@@ -540,21 +543,21 @@ class RouterServiceTest {
         assertTrue(simulatedNoKey.simulatedResponse().startsWith("[Simulación AI Cost Router]"));
         verify(mockGeminiClient, never()).generateContent(anyString(), anyString(), anyString());
 
-        // Subcaso B: Con clave BYOK pero GeminiRestClient falla (devuelve Optional.empty()) -> fallback a simulación
+        // Subcaso B: Con clave BYOK en un prompt nuevo pero GeminiRestClient falla (devuelve Optional.empty()) -> fallback a simulación
         when(mockGeminiClient.generateContent(
                 RouterService.MODEL_FAST,
-                "Consulta sencilla",
+                "Otra consulta sencilla",
                 "AIzaSyExpiredKey"))
                 .thenReturn(Optional.empty());
 
         RouterResponse simulatedOnFailure = hybridServiceNoKeys.routePrompt(
-                new PromptRequest("fallback-user", "Consulta sencilla"),
+                new PromptRequest("fallback-user", "Otra consulta sencilla"),
                 "AIzaSyExpiredKey"
         );
         assertTrue(simulatedOnFailure.simulatedResponse().startsWith("[Simulación AI Cost Router]"));
         verify(mockGeminiClient, times(1)).generateContent(
                 RouterService.MODEL_FAST,
-                "Consulta sencilla",
+                "Otra consulta sencilla",
                 "AIzaSyExpiredKey"
         );
     }
@@ -719,5 +722,128 @@ class RouterServiceTest {
         assertEquals(new BigDecimal("0.001000"), exception.getCurrentSpendUsd());
         assertEquals(new BigDecimal("0.001000"), exception.getMaxBudgetUsd());
         verify(requestLogRepository, never()).save(any(RequestLog.class));
+    }
+
+    /**
+     * Verifica la normalización semántica y detección de *Cache Hit* en {@link RouterService#routePrompt(PromptRequest, String)}:
+     * cuando ya existe un registro previo con {@code "  ¿Qué día   es HOY? "} y entra un nuevo prompt
+     * {@code "¿qué día es hoy?"}, el enrutador detecta la equivalencia semántica ({@code cacheHit = true}),
+     * reutiliza la respuesta previa sin invocar a {@link GeminiRestClient} y persiste el nuevo
+     * {@link RequestLog} con {@code cacheHit = true}.
+     */
+    @Test
+    @DisplayName("Caché Semántica (Cache Hit): Debe detectar prompts equivalentes normalizados, omitir llamada a GeminiRestClient y guardar cacheHit=true")
+    void shouldDetectSemanticCacheHitSkipGeminiClientAndPersistCacheHitTrue() {
+        GeminiRestClient mockGeminiClient = mock(GeminiRestClient.class);
+        RouterService cacheAwareService = new RouterService(
+                requestLogRepository,
+                mockGeminiClient,
+                "AIzaSyServerKeyForCacheTest"
+        );
+
+        when(requestLogRepository.save(any(RequestLog.class))).thenAnswer(invocation -> {
+            RequestLog arg = invocation.getArgument(0);
+            arg.setId(UUID.randomUUID());
+            arg.setCreatedAt(LocalDateTime.now());
+            return arg;
+        });
+
+        // 1. Primera petición con espacios extra y mayúsculas -> Cache Miss (invoca GeminiRestClient)
+        when(requestLogRepository.findAllByOrderByCreatedAtDesc()).thenReturn(Collections.emptyList());
+        when(mockGeminiClient.generateContent(
+                RouterService.MODEL_FAST,
+                "¿Qué día   es HOY?",
+                "AIzaSyServerKeyForCacheTest"))
+                .thenReturn(Optional.of("Hoy es miércoles."));
+
+        RouterResponse firstResponse = cacheAwareService.routePrompt(
+                new PromptRequest("user-cache-1", "  ¿Qué día   es HOY? ")
+        );
+
+        assertFalse(firstResponse.cacheHit());
+        assertEquals("Hoy es miércoles.", firstResponse.simulatedResponse());
+        verify(mockGeminiClient, times(1)).generateContent(
+                RouterService.MODEL_FAST,
+                "¿Qué día   es HOY?",
+                "AIzaSyServerKeyForCacheTest"
+        );
+
+        // 2. Segunda petición con distinta capitalización y espacios simples -> Cache Hit (0 llamadas a GeminiRestClient)
+        clearInvocations(mockGeminiClient);
+        RequestLog persistedFirstLog = RequestLog.builder()
+                .id(firstResponse.id())
+                .userId("user-cache-1")
+                .promptContent("  ¿Qué día   es HOY? ")
+                .modelRouted(RouterService.MODEL_FAST)
+                .tokensEstimated(firstResponse.tokensEstimated())
+                .createdAt(LocalDateTime.now().minusSeconds(10))
+                .cacheHit(false)
+                .build();
+        when(requestLogRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(persistedFirstLog));
+
+        ArgumentCaptor<RequestLog> logCaptor = ArgumentCaptor.forClass(RequestLog.class);
+        RouterResponse secondResponse = cacheAwareService.routePrompt(
+                new PromptRequest("user-cache-2", "¿qué día es hoy?")
+        );
+
+        assertTrue(secondResponse.cacheHit(), "La segunda petición equivalente debe marcarse como cacheHit = true");
+        assertEquals("Hoy es miércoles.", secondResponse.simulatedResponse());
+        assertEquals(RouterService.MODEL_FAST, secondResponse.modelRouted());
+        verifyNoInteractions(mockGeminiClient);
+
+        verify(requestLogRepository, times(2)).save(logCaptor.capture());
+        RequestLog secondSavedEntity = logCaptor.getAllValues().get(1);
+        assertTrue(secondSavedEntity.getCacheHit(), "La entidad guardada en BD debe tener cacheHit = true");
+    }
+
+    /**
+     * Verifica el cálculo financiero de la Caché Semántica de Coste Cero en {@link RouterService#getStats(String)}:
+     * cuando existe 1 petición normal ({@code cacheHit = false}) y 1 petición servida desde caché
+     * ({@code cacheHit = true}), {@code getStats} contabiliza {@code cacheHits == 1}, suma ambas en
+     * {@code totalRequests} y {@code estimatedBaselineProCostUsd}, pero en {@code estimatedActualCostUsd}
+     * solo factura la primera petición (coste {@code $0.000000 USD} para la segunda), elevando el ahorro.
+     */
+    @Test
+    @DisplayName("Caché Semántica FinOps (Coste Cero): getStats debe facturar $0.000000 USD por los Cache Hits y sumar el 100% al ahorro")
+    void shouldCalculateZeroActualCostAndFullSavingsForCacheHitsInGetStats() {
+        // Petición 1 (Cache Miss en Pro): 100.000 tokens -> Coste real = $0.125000 USD, Base Pro = $0.125000 USD
+        RequestLog firstMissLog = RequestLog.builder()
+                .id(UUID.randomUUID())
+                .userId("finops-cache-user")
+                .promptContent("Analizar en profundidad la arquitectura del sistema")
+                .modelRouted(RouterService.MODEL_PRO)
+                .tokensEstimated(100_000)
+                .createdAt(LocalDateTime.now().minusMinutes(5))
+                .cacheHit(false)
+                .build();
+
+        // Petición 2 (Cache Hit en Pro): 100.000 tokens -> Coste real = $0.000000 USD, Base Pro = $0.125000 USD
+        RequestLog secondHitLog = RequestLog.builder()
+                .id(UUID.randomUUID())
+                .userId("finops-cache-user")
+                .promptContent("  analizar en profundidad   la ARQUITECTURA del sistema ")
+                .modelRouted(RouterService.MODEL_PRO)
+                .tokensEstimated(100_000)
+                .createdAt(LocalDateTime.now().minusMinutes(1))
+                .cacheHit(true)
+                .build();
+
+        when(requestLogRepository.findByUserIdOrderByCreatedAtDesc("finops-cache-user"))
+                .thenReturn(List.of(secondHitLog, firstMissLog));
+
+        RouterStatsResponse stats = routerService.getStats("finops-cache-user");
+
+        assertEquals(2L, stats.totalRequests());
+        assertEquals(200_000L, stats.totalTokensEstimated());
+        assertEquals(0L, stats.fastModelRequests());
+        assertEquals(2L, stats.proModelRequests());
+        assertEquals(1L, stats.cacheHits());
+        // Coste real: solo cobra los primeros 100.000 tokens ($0.125000 USD); el Cache Hit cuesta $0.000000 USD
+        assertEquals(new BigDecimal("0.125000"), stats.estimatedActualCostUsd());
+        // Coste base sin caché: 200.000 tokens en Pro = $0.250000 USD
+        assertEquals(new BigDecimal("0.250000"), stats.estimatedBaselineProCostUsd());
+        // Ahorro neto gracias a la caché: $0.125000 USD (50.0% de ahorro total sobre las 2 peticiones Pro)
+        assertEquals(new BigDecimal("0.125000"), stats.estimatedSavingsUsd());
+        assertEquals(50.0, stats.savingsPercentage());
     }
 }

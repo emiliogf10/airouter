@@ -63,6 +63,7 @@ El esquema de base de datos está gobernado exclusivamente por **Flyway** median
 ### Migraciones Activas
 * **`V1__create_request_logs_table.sql`**: Crea la tabla `request_logs` (`id`, `user_id`, `prompt_content`, `model_routed`, `tokens_estimated`, `created_at`) y los índices B-Tree de alto rendimiento (`idx_request_logs_user_id`, `idx_request_logs_created_at`, `idx_request_logs_model_routed`).
 * **`V2__create_user_budgets_table.sql`**: Crea la tabla `user_budgets` (`id`, `user_id`, `max_budget_usd`, `auto_downgrade_enabled`, `updated_at`) con restricción única e índice B-Tree sobre `user_id` para el cortafuegos presupuestario FinOps.
+* **`V3__add_cache_hit_to_request_logs.sql`**: Añade la columna `cache_hit` (`BOOLEAN NOT NULL DEFAULT FALSE`) y el índice `idx_request_logs_cache_hit` a `request_logs` para la **Caché Semántica de Coste Cero (*Zero-Cost Cache*)**.
 
 ### Acceso a la Consola H2 (Desarrollo)
 Con el backend en ejecución, puedes inspeccionar la base de datos en memoria desde el navegador:
