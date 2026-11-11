@@ -4,19 +4,28 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.tuproyecto.airouter.models.dto.PromptRequest;
+import com.tuproyecto.airouter.models.dto.RouterResponse;
 import com.tuproyecto.airouter.repositories.RequestLogRepository;
 import com.tuproyecto.airouter.services.RouterService;
+import java.time.LocalDateTime;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
@@ -25,11 +34,15 @@ import org.springframework.web.context.WebApplicationContext;
  * Pruebas de integración extremo a extremo para {@link GatewayController} y {@link com.tuproyecto.airouter.exceptions.GlobalExceptionHandler}.
  *
  * <p>Verifica el comportamiento HTTP de los endpoints {@code POST /api/v1/router/prompt},
- * {@code GET /api/v1/router/logs} y {@code GET /api/v1/router/stats}, el formato de errores
- * {@code ErrorResponse} ante entradas inválidas y la persistencia real en la base de datos H2
- * gestionada por Flyway.</p>
+ * {@code GET /api/v1/router/logs} y {@code GET /api/v1/router/stats}, la propagación de la cabecera
+ * {@code X-API-Key} (modo BYOK), el formato de errores {@code ErrorResponse} ante entradas inválidas
+ * y la persistencia real en la base de datos H2 gestionada por Flyway.</p>
  */
 @SpringBootTest
+@TestPropertySource(properties = {
+        "airouter.gemini.base-url=http://127.0.0.1:1",
+        "airouter.gemini.timeout-seconds=1"
+})
 class GatewayControllerTest {
 
     /**
@@ -110,6 +123,52 @@ class GatewayControllerTest {
                 .andExpect(jsonPath("$.userId", is("qa-architect")))
                 .andExpect(jsonPath("$.modelRouted", is(RouterService.MODEL_PRO)))
                 .andExpect(jsonPath("$.simulatedResponse", containsString(RouterService.MODEL_PRO)));
+    }
+
+    /**
+     * Verifica que cuando el cliente envía la cabecera {@code X-API-Key} en {@code POST /api/v1/router/prompt},
+     * {@link GatewayController} delegue en {@link RouterService#routePrompt(PromptRequest, String)} pasando
+     * la clave recibida para activar el modo híbrido BYOK.
+     *
+     * @throws Exception si ocurre un error durante la petición simulada
+     */
+    @Test
+    @DisplayName("POST /api/v1/router/prompt con cabecera X-API-Key debe delegar en routerService.routePrompt(request, apiKey)")
+    void shouldDelegateToRouterServiceWithApiKeyWhenHeaderIsPresent() throws Exception {
+        RouterService mockRouterService = mock(RouterService.class);
+        MockMvc standaloneMvc = MockMvcBuilders.standaloneSetup(new GatewayController(mockRouterService)).build();
+
+        PromptRequest expectedRequest = new PromptRequest("byok-client", "Hola Gemini real");
+        RouterResponse expectedResponse = new RouterResponse(
+                UUID.randomUUID(),
+                "byok-client",
+                "Hola Gemini real",
+                RouterService.MODEL_FAST,
+                4,
+                "Respuesta directa de Google Gemini API",
+                LocalDateTime.now()
+        );
+
+        when(mockRouterService.routePrompt(expectedRequest, "AIzaSyClientHeaderKey"))
+                .thenReturn(expectedResponse);
+
+        String payload = """
+                {
+                    "userId": "byok-client",
+                    "prompt": "Hola Gemini real"
+                }
+                """;
+
+        standaloneMvc.perform(post("/api/v1/router/prompt")
+                        .header(GatewayController.API_KEY_HEADER, "AIzaSyClientHeaderKey")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId", is("byok-client")))
+                .andExpect(jsonPath("$.modelRouted", is(RouterService.MODEL_FAST)))
+                .andExpect(jsonPath("$.simulatedResponse", is("Respuesta directa de Google Gemini API")));
+
+        verify(mockRouterService, times(1)).routePrompt(expectedRequest, "AIzaSyClientHeaderKey");
     }
 
     /**

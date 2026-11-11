@@ -24,13 +24,13 @@ export interface HeaderProps {
 }
 
 /**
- * Cabecera principal del panel de control analítico **AI Cost Router**.
- * Presenta el título de la plataforma, el indicador de estado del API Gateway,
- * el buscador para filtrar métricas por `userId`, el conmutador interactivo de divisa
- * (`EUR €` / `USD $`) y el botón de actualización en tiempo real.
+ * Barra de navegación superior del panel de control analítico **AI Cost Router**
+ * rediseñada con estética minimalista inspirada en Vercel / shadcn/ui.
+ * Incluye estado de red del Gateway, buscador reactivo por `userId`, conmutador de divisa
+ * (`EUR €` activo por defecto / `USD $`) y botón de sincronización.
  *
  * @param props Propiedades de configuración e interacción de la cabecera.
- * @returns Elemento JSX con la barra de navegación superior del Dashboard.
+ * @returns Elemento JSX con la barra superior del Dashboard.
  */
 export const Header: React.FC<HeaderProps> = ({
   currency,
@@ -42,36 +42,36 @@ export const Header: React.FC<HeaderProps> = ({
   isGatewayOnline,
 }) => {
   return (
-    <header className="border-b border-slate-800/80 bg-slate-900/90 backdrop-blur-md sticky top-0 z-30">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <header className="border-b border-white/10 bg-zinc-950/85 backdrop-blur-md sticky top-0 z-30">
+      <div className="max-w-7xl mx-auto px-6 py-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         {/* Identidad de marca y estado del Gateway */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-gradient-to-br from-emerald-500/20 to-cyan-500/20 border border-emerald-500/30 text-emerald-400 shadow-inner">
-              <Cpu className="w-6 h-6" aria-hidden="true" />
+          <div className="flex items-center gap-3.5">
+            <div className="p-2.5 rounded-xl bg-zinc-900 border border-white/10 text-zinc-100 shadow-sm">
+              <Cpu className="w-5 h-5 text-emerald-400" aria-hidden="true" />
             </div>
             <div>
               <div className="flex items-center gap-2.5">
-                <h1 className="text-xl font-bold tracking-tight text-white">
+                <h1 className="text-lg font-semibold tracking-tight text-zinc-100">
                   AI Cost Router
                 </h1>
                 <span
                   className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border ${
                     isGatewayOnline
-                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                      : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                      : 'bg-zinc-800 text-zinc-400 border-white/10'
                   }`}
                 >
                   <span
                     className={`w-1.5 h-1.5 rounded-full ${
-                      isGatewayOnline ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                      isGatewayOnline ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'
                     }`}
                   />
                   {isGatewayOnline ? 'Gateway Activo' : 'Modo Sin Conexión'}
                 </span>
               </div>
-              <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
-                <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" />
+              <p className="text-xs text-zinc-400 flex items-center gap-1.5 mt-0.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" aria-hidden="true" />
                 Enrutamiento inteligente de LLMs, control de tokens y ahorro en tiempo real
               </p>
             </div>
@@ -83,7 +83,7 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Filtro por userId */}
           <div className="relative flex-1 sm:flex-initial sm:w-64">
             <Search
-              className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+              className="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
               aria-hidden="true"
             />
             <input
@@ -93,7 +93,7 @@ export const Header: React.FC<HeaderProps> = ({
               placeholder="Filtrar por userId (global si vacío)..."
               aria-label="Filtrar por usuario"
               data-testid="user-filter-input"
-              className="w-full pl-9 pr-8 py-1.5 text-sm bg-slate-950/90 border border-slate-700/80 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 transition"
+              className="w-full pl-9 pr-8 py-1.5 text-sm bg-zinc-900/80 border border-white/10 rounded-lg text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500/50 transition"
             />
             {filterUserId && (
               <button
@@ -101,7 +101,8 @@ export const Header: React.FC<HeaderProps> = ({
                 onClick={() => onFilterUserIdChange('')}
                 title="Limpiar filtro de usuario"
                 aria-label="Limpiar filtro de usuario"
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                data-testid="clear-user-filter-button"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 cursor-pointer"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -110,7 +111,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Conmutador de Divisa (EUR € por defecto | USD $) */}
           <div
-            className="inline-flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800"
+            className="inline-flex items-center bg-zinc-900 p-1 rounded-lg border border-white/10"
             role="group"
             aria-label="Selector de moneda"
             title={`Tasa aplicada: 1 USD = ${USD_TO_EUR_RATE} EUR`}
@@ -120,10 +121,10 @@ export const Header: React.FC<HeaderProps> = ({
               data-testid="currency-toggle-eur"
               aria-pressed={currency === 'EUR'}
               onClick={() => onCurrencyChange('EUR')}
-              className={`px-3 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-all cursor-pointer ${
                 currency === 'EUR'
-                  ? 'bg-emerald-500 text-slate-950 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-zinc-100 text-zinc-950 shadow-sm'
+                  : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               EUR €
@@ -133,10 +134,10 @@ export const Header: React.FC<HeaderProps> = ({
               data-testid="currency-toggle-usd"
               aria-pressed={currency === 'USD'}
               onClick={() => onCurrencyChange('USD')}
-              className={`px-3 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-all cursor-pointer ${
                 currency === 'USD'
-                  ? 'bg-emerald-500 text-slate-950 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-zinc-100 text-zinc-950 shadow-sm'
+                  : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               USD $
@@ -149,13 +150,13 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={onRefresh}
             disabled={isRefreshing}
             data-testid="refresh-button"
-            className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 transition cursor-pointer disabled:opacity-60"
+            className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-100 border border-white/10 transition cursor-pointer disabled:opacity-60 shadow-sm"
           >
             <RefreshCw
-              className={`w-3.5 h-3.5 text-emerald-400 ${isRefreshing ? 'animate-spin' : ''}`}
+              className={`w-3.5 h-3.5 text-zinc-400 ${isRefreshing ? 'animate-spin' : ''}`}
               aria-hidden="true"
             />
-            Actualizar datos
+            <span data-testid="refresh-dashboard-button">Actualizar datos</span>
           </button>
         </div>
       </div>

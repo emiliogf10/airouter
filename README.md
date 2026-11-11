@@ -40,13 +40,16 @@
 │   └── pom.xml
 ├── frontend/                   # Aplicación React 19 + Vite + Tailwind CSS v4 (Dashboard)
 │   ├── src/
-│   │   ├── components/         # Header (con selector EUR/USD), StatsCards, PromptPlayground, etc.
+│   │   ├── components/         # Header, MetricCard, StatsCards, PromptPlayground, RecentLogsTable...
 │   │   ├── services/           # Cliente HTTP tipado hacia /api/v1/router
 │   │   ├── types/              # Contratos TypeScript alineados con los DTOs de Java
 │   │   ├── utils/              # Conversión y formateo de divisa (EUR € / USD $)
 │   │   └── test/               # Suite de pruebas unitarias y de integración (Vitest)
 │   ├── package.json
 │   └── vite.config.ts
+├── docs/                       # Documentación oficial del proyecto
+│   ├── MANUAL_DE_USUARIO.md    # Guía funcional paso a paso del Dashboard y simulador
+│   └── MANUAL_DEL_PROGRAMADOR.md # Arquitectura técnica, modelo de datos, seguridad y costes
 ├── GEMINI.md                   # Contexto global, reglas arquitectónicas y ADRs
 └── PLAN_DE_ACCION.md           # Backlog priorizado e historial de cambios
 ```
@@ -73,7 +76,10 @@ Con el backend en ejecución, puedes inspeccionar la base de datos en memoria de
 ## 🔌 Endpoints de la API REST (`/api/v1/router`)
 
 ### 1. Evaluar y Enrutar un Prompt (`POST /api/v1/router/prompt`)
-Analiza la complejidad del prompt, calcula los tokens estimados, decide el modelo óptimo en coste, persiste el registro en base de datos y devuelve la respuesta simulada.
+Analiza la complejidad del prompt, calcula los tokens estimados, decide el modelo óptimo en coste, persiste el registro en base de datos y ejecuta la petición en **Modo Híbrido de 3 niveles**:
+1. **Nivel 1 — BYOK (*Bring Your Own Key* por usuario):** Si el cliente envía su clave de Google AI Studio (`AIzaSy...`) en la cabecera HTTP `X-API-Key`, el Backend invoca en tiempo real la API oficial de Google Gemini (`/v1beta/models/{model}:generateContent`) con la clave del usuario.
+2. **Nivel 2 — Clave Global del Servidor:** Si no se envía cabecera `X-API-Key`, pero existe la variable de entorno `GEMINI_API_KEY` (`airouter.gemini.api-key`) en el servidor, invoca la API oficial de Google Gemini con dicha clave.
+3. **Nivel 3 — Modo Simulación Resiliente (Sin coste):** Si no hay clave configurada (o si la llamada externa falla por red/autenticación), responde automáticamente con el motor de simulación sin interrumpir el servicio.
 
 * **Heurística de Enrutamiento:**
   * **`gemini-2.5-flash` (Rápido / Económico):** Prompts con `<= 50` tokens estimados y sin términos de alta complejidad.

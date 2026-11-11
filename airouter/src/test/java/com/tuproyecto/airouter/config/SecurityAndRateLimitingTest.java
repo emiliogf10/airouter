@@ -34,7 +34,9 @@ import org.springframework.web.context.WebApplicationContext;
 @SpringBootTest
 @TestPropertySource(properties = {
         "airouter.security.rate-limit.requests-per-minute=3",
-        "airouter.security.cors.allowed-origins=http://localhost:5173"
+        "airouter.security.cors.allowed-origins=http://localhost:5173",
+        "airouter.gemini.base-url=http://127.0.0.1:1",
+        "airouter.gemini.timeout-seconds=1"
 })
 class SecurityAndRateLimitingTest {
 
