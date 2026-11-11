@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowUpRight, Clock, Inbox, Sparkles, User, Zap } from 'lucide-react';
+import { ArrowUpRight, Clock, Database, Inbox, Sparkles, User, Zap } from 'lucide-react';
 import type { RouterResponse } from '../types/router';
 
 /**
@@ -159,20 +159,31 @@ export const RecentLogsTable: React.FC<RecentLogsTableProps> = ({
                       </p>
                     </td>
                     <td className="py-4 px-6 whitespace-nowrap">
-                      <span
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border ${
-                          isPro
-                            ? 'bg-indigo-500/10 text-indigo-300 border-indigo-500/20'
-                            : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
-                        }`}
-                      >
-                        {isPro ? (
-                          <Sparkles className="w-3 h-3" aria-hidden="true" />
-                        ) : (
-                          <Zap className="w-3 h-3" aria-hidden="true" />
+                      <div className="inline-flex flex-wrap items-center gap-1.5">
+                        <span
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border ${
+                            isPro
+                              ? 'bg-indigo-500/10 text-indigo-300 border-indigo-500/20'
+                              : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
+                          }`}
+                        >
+                          {isPro ? (
+                            <Sparkles className="w-3 h-3" aria-hidden="true" />
+                          ) : (
+                            <Zap className="w-3 h-3" aria-hidden="true" />
+                          )}
+                          {log.modelRouted}
+                        </span>
+                        {log.cacheHit && (
+                          <span
+                            data-testid={`log-cache-hit-${log.id}`}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+                          >
+                            <Database className="w-3 h-3" aria-hidden="true" />
+                            Caché Hit (0 €)
+                          </span>
                         )}
-                        {log.modelRouted}
-                      </span>
+                      </div>
                     </td>
                     <td className="py-4 px-6 whitespace-nowrap text-right font-mono text-zinc-200">
                       {log.tokensEstimated.toLocaleString('es-ES')}

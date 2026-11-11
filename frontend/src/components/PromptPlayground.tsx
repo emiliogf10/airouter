@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Cpu,
+  Database,
   KeyRound,
   Send,
   Sparkles,
@@ -317,6 +318,15 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
               Enrutamiento Completado
             </span>
             <div className="flex flex-wrap items-center gap-2">
+              {lastResult.cacheHit && (
+                <span
+                  data-testid="routed-cache-hit-badge"
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+                >
+                  <Database className="w-3 h-3" aria-hidden="true" />
+                  Caché Hit (0 €)
+                </span>
+              )}
               <span
                 data-testid="routed-execution-mode-badge"
                 className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium border ${

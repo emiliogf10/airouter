@@ -123,9 +123,15 @@ export const StatsCards: React.FC<StatsCardsProps> = ({
           </span>
         }
         footer={
-          <span className="text-xs text-zinc-400">
-            Optimización frente a enrutar 100% a Gemini 2.5 Pro
-          </span>
+          <div className="flex items-center justify-between text-xs text-zinc-400 gap-2">
+            <span className="truncate">Optimización frente a Base Pro</span>
+            <span
+              data-testid="kpi-cache-hits-count"
+              className="text-emerald-400 font-medium whitespace-nowrap"
+            >
+              Caché Hit (0 €): {stats.cacheHits ?? 0}
+            </span>
+          </div>
         }
       />
     </section>

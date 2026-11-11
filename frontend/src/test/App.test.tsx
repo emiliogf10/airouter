@@ -656,4 +656,74 @@ describe('AI Cost Router Dashboard - Pruebas de Integración', () => {
       );
     });
   });
+
+  /**
+   * Verifica la visualización de la Caché Semántica de Coste Cero (`Caché Hit (0 €)`):
+   * comprueba que cuando `/api/v1/router/prompt` y `/api/v1/router/logs` devuelven un registro con
+   * `cacheHit: true` y `/api/v1/router/stats` incluye `cacheHits: 1`, se renderizan:
+   * - El badge `data-testid="routed-cache-hit-badge"` en `PromptPlayground`.
+   * - El badge `data-testid="log-cache-hit-..."` en `RecentLogsTable`.
+   * - El contador `data-testid="kpi-cache-hits-count"` (`Caché Hit (0 €): 1`) en `StatsCards`.
+   */
+  it('renderiza los badges Caché Hit (0 €) en el simulador, tabla de historial y tarjeta de ahorro cuando cacheHit es true', async () => {
+    const cachedResponse: RouterResponse = {
+      id: 'cache-hit-uuid-9999',
+      userId: 'demo-user',
+      promptContent: '¿Qué día es hoy?',
+      modelRouted: 'gemini-2.5-flash',
+      tokensEstimated: 5,
+      simulatedResponse:
+        "[Simulación AI Cost Router] Petición procesada exitosamente por el modelo 'gemini-2.5-flash' (5 tokens estimados).",
+      createdAt: '2026-10-20T23:10:00',
+      cacheHit: true,
+    };
+
+    const statsWithCacheHit: RouterStatsResponse = {
+      ...MOCK_GLOBAL_STATS,
+      totalRequests: 3,
+      cacheHits: 1,
+    };
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/prompt') && init?.method === 'POST') {
+        return new Response(JSON.stringify(cachedResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/stats')) {
+        return new Response(JSON.stringify(statsWithCacheHit), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify([cachedResponse, ...MOCK_INITIAL_LOGS]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('kpi-cache-hits-count')).toHaveTextContent('Caché Hit (0 €): 1');
+      expect(screen.getByTestId('log-cache-hit-cache-hit-uuid-9999')).toHaveTextContent(
+        'Caché Hit (0 €)',
+      );
+    });
+
+    const promptTextarea = screen.getByLabelText(/Contenido del Prompt/i);
+    await userEvent.clear(promptTextarea);
+    await userEvent.type(promptTextarea, '¿Qué día es hoy?');
+    await userEvent.click(screen.getByTestId('submit-prompt-button'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('playground-result-card')).toBeInTheDocument();
+      expect(screen.getByTestId('routed-cache-hit-badge')).toHaveTextContent('Caché Hit (0 €)');
+    });
+  });
 });

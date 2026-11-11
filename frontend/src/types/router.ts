@@ -77,6 +77,8 @@ export interface RouterResponse {
   simulatedResponse: string | null;
   /** Fecha y hora ISO en la que se registró la petición. */
   createdAt: string;
+  /** Indica si la petición fue resuelta mediante la Caché Semántica de Prompts a coste cero (`true`) o evaluada de nuevo (`false`). */
+  cacheHit?: boolean;
 }
 
 /**
@@ -104,6 +106,8 @@ export interface RouterStatsResponse {
   estimatedSavingsUsd: number;
   /** Porcentaje de ahorro económico obtenido respecto al coste base (`0.0` a `100.0`). */
   savingsPercentage: number;
+  /** Cantidad total de peticiones servidas directamente desde la Caché Semántica a coste cero (`$0.000000`). */
+  cacheHits?: number;
 }
 
 /**
