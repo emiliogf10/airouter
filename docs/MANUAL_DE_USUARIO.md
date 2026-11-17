@@ -74,8 +74,11 @@ Ubicada en la parte superior fija de la pantalla:
 
 ---
 
-### 3.3. Panel de Cortafuegos Presupuestario (`BudgetControlCard`)
-Ubicado justo debajo de las 4 tarjetas principales, permite gobernar el techo de gasto del usuario activo:
+### 3.3. Panel de Cortafuegos Presupuestario (`BudgetControlCard`) y Gestor de Claves API (`ApiKeyManagerCard`)
+Ubicados justo debajo de las 4 tarjetas principales en una cuadrícula de dos columnas:
+
+#### A) Cortafuegos Presupuestario (`BudgetControlCard`)
+Permite gobernar el techo de gasto del usuario activo:
 * **Indicador de Estado (Arriba a la derecha):**
   * ⚪ **`Sin límite (Ilimitado)`:** El usuario puede enviar peticiones sin tope presupuestario.
   * 🟢 **`Presupuesto Activo (OK)`:** El consumo está por debajo del 80% del límite.
@@ -85,8 +88,14 @@ Ubicado justo debajo de las 4 tarjetas principales, permite gobernar el techo de
 * **Cómo configurar o quitar un límite:**
   1. Escribe un importe en el campo **`Límite máximo`** (en `€` o `$` según tengas seleccionado arriba) o pulsa uno de los botones rápidos: **`Micro (0,000020 €)`** (ideal para pruebas rápidas) o **`Estándar (1,00 €)`**.
   2. Marca o desmarca la casilla **`Degradar a Flash al 80%`** según quieras activar el modo ahorro preventivo.
-  3. Pulsa **`Guardar límite`**.
-  4. Si deseas volver al estado ilimitado, pulsa **`Quitar límite`**.
+  3. Pulsa **`Guardar límite`** (o **`Quitar límite`** para volver al estado ilimitado).
+
+#### B) Gestor de Claves API SHA-256 (`ApiKeyManagerCard`)
+Permite emitir y revocar credenciales propias del Gateway (`air_live_...`) asociadas al usuario activo:
+1. **Generar una nueva clave:** Escribe un nombre identificativo (ej. `"Producción App Móvil"`) y pulsa **`Generar API Key`**.
+2. **Banner de Visualización Única:** Aparecerá un recuadro verde mostrando tu clave completa (`air_live_...`). Por seguridad (igual que en OpenAI, Stripe o GitHub), **el secreto completo solo se muestra una vez** porque en la base de datos únicamente se guarda su hash criptográfico **SHA-256**.
+   * Pulsa **`Copiar clave`** para guardarla en el portapapeles o pulsa **`Usar en Simulador`** para inyectarla directamente en el campo `X-API-Key` de la consola inferior.
+3. **Revocar una clave:** En la lista inferior verás todas las claves del usuario con su prefijo enmascarado (`air_live_9f8e...`) y su estado (**`Activa`** o **`Revocada`**). Si pulsas **`Revocar`**, la clave quedará invalidada al instante y cualquier intento de uso devolverá **HTTP `401 Unauthorized`**.
 
 ---
 
@@ -134,5 +143,6 @@ Ubicada en la parte inferior del Dashboard:
 | Código / Alerta | Cuándo ocurre | Qué debes hacer |
 | :--- | :--- | :--- |
 | **`HTTP 400 Bad Request`** | El campo `userId` o el texto del `prompt` están vacíos o superan el límite permitido. | Completa ambos campos antes de pulsar *Ejecutar enrutamiento*. |
+| **`HTTP 401 Unauthorized`** *(Clave API Inválida o Revocada)* | Has enviado en `X-API-Key` una clave gestionada (`air_live_...`) que no existe o ha sido revocada en el gestor de claves. | Genera una nueva clave activa en el panel *Gestor de Claves API* o limpia el campo `X-API-Key`. |
 | **`HTTP 402 Payment Required`** *(Cortafuegos Presupuestario)* | El usuario ha alcanzado el **100%** del presupuesto configurado en el panel FinOps. | Aumenta el límite en la tarjeta *Cortafuegos Presupuestario* o pulsa **`Quitar límite`**. |
 | **`HTTP 429 Too Many Requests`** *(Rate Limiting)* | Has enviado más de **20 peticiones en menos de 60 segundos** desde la misma IP o `X-API-Key`. | Espera el número de segundos indicado en el contador **`Retry-After`** de la alerta o cambia de `X-API-Key`. |

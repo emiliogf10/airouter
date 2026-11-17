@@ -2,22 +2,34 @@ package com.tuproyecto.airouter.services;
 
 import com.tuproyecto.airouter.clients.GeminiRestClient;
 import com.tuproyecto.airouter.exceptions.BudgetExceededException;
+import com.tuproyecto.airouter.exceptions.InvalidApiKeyException;
 import com.tuproyecto.airouter.exceptions.InvalidPromptException;
+import com.tuproyecto.airouter.models.dto.ApiKeyCreatedResponse;
+import com.tuproyecto.airouter.models.dto.ApiKeyResponse;
+import com.tuproyecto.airouter.models.dto.CreateApiKeyRequest;
 import com.tuproyecto.airouter.models.dto.PromptRequest;
 import com.tuproyecto.airouter.models.dto.RouterResponse;
 import com.tuproyecto.airouter.models.dto.RouterStatsResponse;
 import com.tuproyecto.airouter.models.dto.UserBudgetRequest;
 import com.tuproyecto.airouter.models.dto.UserBudgetResponse;
+import com.tuproyecto.airouter.models.entities.ApiKey;
 import com.tuproyecto.airouter.models.entities.RequestLog;
 import com.tuproyecto.airouter.models.entities.UserBudget;
+import com.tuproyecto.airouter.repositories.ApiKeyRepository;
 import com.tuproyecto.airouter.repositories.RequestLogRepository;
 import com.tuproyecto.airouter.repositories.UserBudgetRepository;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,6 +73,26 @@ public class RouterService {
      * Longitud máxima permitida para el identificador de usuario en la tabla {@code user_budgets}.
      */
     public static final int MAX_BUDGET_USER_ID_LENGTH = 120;
+
+    /**
+     * Prefijo estándar para las claves API emitidas y gestionadas por el propio Gateway.
+     */
+    public static final String MANAGED_API_KEY_PREFIX = "air_live_";
+
+    /**
+     * Longitud máxima permitida para el nombre descriptivo de una clave API en la tabla {@code api_keys}.
+     */
+    public static final int MAX_API_KEY_NAME_LENGTH = 100;
+
+    /**
+     * Número de bytes aleatorios criptográficos empleados al generar una clave API (16 bytes = 32 caracteres hex).
+     */
+    private static final int MANAGED_KEY_RANDOM_BYTES = 16;
+
+    /**
+     * Longitud del prefijo visible antes de los puntos suspensivos al enmascarar una clave {@code air_live_...}.
+     */
+    private static final int MANAGED_KEY_VISIBLE_PREFIX_LENGTH = 13;
 
     /**
      * Estado FinOps cuando el usuario no tiene límite presupuestario activo.
@@ -151,6 +183,16 @@ public class RouterService {
     private UserBudgetRepository userBudgetRepository;
 
     /**
+     * Repositorio JPA para la gestión de claves API persistidas con hash SHA-256.
+     */
+    private ApiKeyRepository apiKeyRepository;
+
+    /**
+     * Generador criptográfico de números aleatorios para la emisión de claves {@code air_live_...}.
+     */
+    private final SecureRandom secureRandom = new SecureRandom();
+
+    /**
      * Cliente HTTP síncrono para comunicarse con la API oficial de Google Gemini.
      */
     private final GeminiRestClient geminiRestClient;
@@ -173,7 +215,7 @@ public class RouterService {
      * @param requestLogRepository repositorio de persistencia de registros de peticiones
      */
     public RouterService(RequestLogRepository requestLogRepository) {
-        this(requestLogRepository, null, null, "");
+        this(requestLogRepository, null, null, null, "");
     }
 
     /**
@@ -186,7 +228,7 @@ public class RouterService {
     public RouterService(
             RequestLogRepository requestLogRepository,
             UserBudgetRepository userBudgetRepository) {
-        this(requestLogRepository, userBudgetRepository, null, "");
+        this(requestLogRepository, userBudgetRepository, null, null, "");
     }
 
     /**
@@ -201,15 +243,32 @@ public class RouterService {
             RequestLogRepository requestLogRepository,
             GeminiRestClient geminiRestClient,
             String serverApiKey) {
-        this(requestLogRepository, null, geminiRestClient, serverApiKey);
+        this(requestLogRepository, null, null, geminiRestClient, serverApiKey);
     }
 
     /**
-     * Constructor principal empleado por Spring para inyectar los repositorios JPA, el cliente HTTP
-     * de Google Gemini y la clave de API opcional de servidor.
+     * Constructor de compatibilidad de cuatro argumentos para pruebas unitarias previas.
      *
      * @param requestLogRepository repositorio de persistencia de registros de peticiones
      * @param userBudgetRepository repositorio de persistencia de límites presupuestarios por usuario
+     * @param geminiRestClient     cliente HTTP para invocar la API de Google Gemini
+     * @param serverApiKey         clave de API configurada en el servidor ({@code airouter.gemini.api-key})
+     */
+    public RouterService(
+            RequestLogRepository requestLogRepository,
+            UserBudgetRepository userBudgetRepository,
+            GeminiRestClient geminiRestClient,
+            String serverApiKey) {
+        this(requestLogRepository, userBudgetRepository, null, geminiRestClient, serverApiKey);
+    }
+
+    /**
+     * Constructor principal empleado por Spring para inyectar todos los repositorios JPA,
+     * el cliente HTTP de Google Gemini y la clave de API opcional de servidor.
+     *
+     * @param requestLogRepository repositorio de persistencia de registros de peticiones
+     * @param userBudgetRepository repositorio de persistencia de límites presupuestarios por usuario
+     * @param apiKeyRepository     repositorio de persistencia de claves API con hash SHA-256
      * @param geminiRestClient     cliente HTTP para invocar la API de Google Gemini
      * @param serverApiKey         clave de API configurada en el servidor ({@code airouter.gemini.api-key})
      */
@@ -217,10 +276,12 @@ public class RouterService {
     public RouterService(
             RequestLogRepository requestLogRepository,
             UserBudgetRepository userBudgetRepository,
+            ApiKeyRepository apiKeyRepository,
             GeminiRestClient geminiRestClient,
             @Value("${airouter.gemini.api-key:}") String serverApiKey) {
         this.requestLogRepository = requestLogRepository;
         this.userBudgetRepository = userBudgetRepository;
+        this.apiKeyRepository = apiKeyRepository;
         this.geminiRestClient = geminiRestClient;
         this.serverApiKey = serverApiKey != null ? serverApiKey.trim() : "";
     }
@@ -232,6 +293,15 @@ public class RouterService {
      */
     public void setUserBudgetRepository(UserBudgetRepository userBudgetRepository) {
         this.userBudgetRepository = userBudgetRepository;
+    }
+
+    /**
+     * Permite asignar o reemplazar el repositorio de claves API en pruebas unitarias.
+     *
+     * @param apiKeyRepository instancia del repositorio de claves API
+     */
+    public void setApiKeyRepository(ApiKeyRepository apiKeyRepository) {
+        this.apiKeyRepository = apiKeyRepository;
     }
 
     /**
@@ -262,6 +332,7 @@ public class RouterService {
     @Transactional
     public RouterResponse routePrompt(PromptRequest request, String clientApiKey) {
         validateRequest(request);
+        validateManagedClientApiKeyIfPresent(clientApiKey);
 
         String normalizedUserId = request.userId().trim();
         String promptContent = request.prompt();
@@ -605,19 +676,183 @@ public class RouterService {
     }
 
     /**
-     * Resuelve la clave de API efectiva aplicando la jerarquía de 3 niveles del modo híbrido:
+     * Calcula el hash criptográfico SHA-256 en formato hexadecimal en minúsculas (64 caracteres)
+     * para una clave API en texto plano.
+     *
+     * @param rawApiKey clave API en texto plano
+     * @return representación hexadecimal de 64 caracteres del resumen SHA-256
+     * @throws InvalidPromptException si {@code rawApiKey} es nula o está en blanco
+     */
+    public String hashApiKeySha256(String rawApiKey) {
+        if (rawApiKey == null || rawApiKey.isBlank()) {
+            throw new InvalidPromptException("La clave API para calcular el hash SHA-256 no puede ser nula ni estar en blanco.");
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hashBytes = digest.digest(rawApiKey.trim().getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hashBytes);
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("Algoritmo criptográfico SHA-256 no disponible en el entorno JVM.", ex);
+        }
+    }
+
+    /**
+     * Genera una nueva clave API gestionada por el Gateway ({@code air_live_<32_hex>}), almacena
+     * únicamente su prefijo enmascarado y su hash SHA-256 en la base de datos, y devuelve por única
+     * vez el secreto en texto plano en {@link ApiKeyCreatedResponse}.
+     *
+     * @param request DTO con el identificador de usuario y el nombre descriptivo de la clave
+     * @return DTO {@link ApiKeyCreatedResponse} incluyendo {@code rawApiKey} por única vez
+     * @throws InvalidPromptException si la petición, el usuario o el nombre de la clave son inválidos
+     */
+    @Transactional
+    public ApiKeyCreatedResponse createApiKey(CreateApiKeyRequest request) {
+        if (request == null) {
+            throw new InvalidPromptException("La solicitud de creación de clave API no puede ser nula.");
+        }
+        String cleanedUserId = validateAndTrimBudgetUserId(request.userId());
+        if (request.keyName() == null || request.keyName().isBlank()) {
+            throw new InvalidPromptException("El nombre descriptivo de la clave (keyName) es obligatorio y no puede estar en blanco.");
+        }
+        String cleanedKeyName = request.keyName().trim();
+        if (cleanedKeyName.length() > MAX_API_KEY_NAME_LENGTH) {
+            throw new InvalidPromptException(
+                    "El nombre descriptivo de la clave (keyName) no puede superar los " + MAX_API_KEY_NAME_LENGTH + " caracteres.");
+        }
+
+        byte[] randomBytes = new byte[MANAGED_KEY_RANDOM_BYTES];
+        secureRandom.nextBytes(randomBytes);
+        String hexToken = HexFormat.of().formatHex(randomBytes);
+        String rawApiKey = MANAGED_API_KEY_PREFIX + hexToken;
+        String keyPrefix = rawApiKey.substring(0, MANAGED_KEY_VISIBLE_PREFIX_LENGTH) + "...";
+        String keyHash = hashApiKeySha256(rawApiKey);
+        LocalDateTime now = LocalDateTime.now();
+
+        ApiKey entityToSave = ApiKey.builder()
+                .userId(cleanedUserId)
+                .keyName(cleanedKeyName)
+                .keyPrefix(keyPrefix)
+                .keyHash(keyHash)
+                .active(Boolean.TRUE)
+                .createdAt(now)
+                .build();
+
+        ApiKey savedEntity;
+        if (apiKeyRepository != null) {
+            savedEntity = apiKeyRepository.save(entityToSave);
+        } else {
+            entityToSave.setId(UUID.randomUUID());
+            savedEntity = entityToSave;
+        }
+
+        log.info("Emitida nueva clave API '{}' [prefijo: '{}'] para el usuario '{}'.",
+                cleanedKeyName, keyPrefix, cleanedUserId);
+
+        return new ApiKeyCreatedResponse(
+                savedEntity.getId(),
+                savedEntity.getUserId(),
+                savedEntity.getKeyName(),
+                savedEntity.getKeyPrefix(),
+                rawApiKey,
+                Boolean.TRUE.equals(savedEntity.getActive()),
+                savedEntity.getCreatedAt()
+        );
+    }
+
+    /**
+     * Recupera el listado de claves API emitidas para un usuario ordenadas de más reciente a más antigua,
+     * ocultando siempre el secreto original y exponiendo únicamente el prefijo enmascarado.
+     *
+     * @param userId identificador del usuario propietario
+     * @return lista de {@link ApiKeyResponse} del usuario
+     * @throws InvalidPromptException si el identificador de usuario es nulo, está en blanco o supera 120 caracteres
+     */
+    @Transactional(readOnly = true)
+    public List<ApiKeyResponse> getUserApiKeys(String userId) {
+        String cleanedUserId = validateAndTrimBudgetUserId(userId);
+        if (apiKeyRepository == null) {
+            return List.of();
+        }
+        return apiKeyRepository.findByUserIdOrderByCreatedAtDesc(cleanedUserId).stream()
+                .map(apiKey -> new ApiKeyResponse(
+                        apiKey.getId(),
+                        apiKey.getUserId(),
+                        apiKey.getKeyName(),
+                        apiKey.getKeyPrefix(),
+                        Boolean.TRUE.equals(apiKey.getActive()),
+                        apiKey.getCreatedAt()
+                ))
+                .toList();
+    }
+
+    /**
+     * Revoca (desactiva) una clave API identificada por su UUID para impedir su uso futuro en el Gateway.
+     *
+     * @param keyId identificador único universal (UUID) de la clave API a revocar
+     * @throws InvalidPromptException si {@code keyId} es nulo
+     */
+    @Transactional
+    public void revokeApiKey(UUID keyId) {
+        if (keyId == null) {
+            throw new InvalidPromptException("El identificador de la clave API (keyId) es obligatorio.");
+        }
+        if (apiKeyRepository == null) {
+            return;
+        }
+        apiKeyRepository.findById(keyId).ifPresent(apiKey -> {
+            apiKey.setActive(Boolean.FALSE);
+            apiKeyRepository.save(apiKey);
+            log.info("Clave API revocada exitosamente [id='{}', prefijo='{}', usuario='{}'].",
+                    apiKey.getId(), apiKey.getKeyPrefix(), apiKey.getUserId());
+        });
+    }
+
+    /**
+     * Verifica la validez criptográfica y el estado activo de una clave API cuando el cliente
+     * envía un token gestionado por el Gateway (con prefijo {@link #MANAGED_API_KEY_PREFIX}).
+     *
+     * @param clientApiKey clave opcional enviada en la cabecera {@code X-API-Key}
+     * @throws InvalidApiKeyException si la clave {@code air_live_...} no existe o ha sido revocada
+     */
+    private void validateManagedClientApiKeyIfPresent(String clientApiKey) {
+        if (clientApiKey == null || clientApiKey.isBlank()) {
+            return;
+        }
+        String trimmedKey = clientApiKey.trim();
+        if (!trimmedKey.startsWith(MANAGED_API_KEY_PREFIX) || apiKeyRepository == null) {
+            return;
+        }
+
+        String keyHash = hashApiKeySha256(trimmedKey);
+        Optional<ApiKey> storedKeyOpt = apiKeyRepository.findByKeyHash(keyHash);
+        if (storedKeyOpt.isEmpty() || !Boolean.TRUE.equals(storedKeyOpt.get().getActive())) {
+            String safePrefix = trimmedKey.length() >= MANAGED_KEY_VISIBLE_PREFIX_LENGTH
+                    ? trimmedKey.substring(0, MANAGED_KEY_VISIBLE_PREFIX_LENGTH) + "..."
+                    : MANAGED_API_KEY_PREFIX + "...";
+            log.warn("Autenticación rechazada [HTTP 401]: Clave API del Gateway '{}' inexistente o revocada.", safePrefix);
+            throw new InvalidApiKeyException(
+                    "La clave API proporcionada ('" + safePrefix + "') es inválida o ha sido revocada.");
+        }
+    }
+
+    /**
+     * Resuelve la clave de API efectiva para invocar a Google Gemini aplicando la jerarquía de 3 niveles:
      * <ol>
-     *   <li>Clave BYOK proporcionada por el usuario en la petición ({@code clientApiKey}).</li>
+     *   <li>Clave BYOK de proveedor externo proporcionada por el usuario ({@code clientApiKey} que no sea
+     *       un token interno {@code air_live_...} del Gateway).</li>
      *   <li>Clave global configurada en el servidor ({@code airouter.gemini.api-key}).</li>
-     *   <li>{@link Optional#empty()} si ninguna clave está disponible (activa el modo simulación).</li>
+     *   <li>{@link Optional#empty()} si ninguna clave de proveedor externo está disponible (activa el modo simulación).</li>
      * </ol>
      *
      * @param clientApiKey clave opcional recibida en la cabecera HTTP de la petición
-     * @return {@link Optional} con la clave efectiva recortada, o vacío si debe operar en simulación
+     * @return {@link Optional} con la clave efectiva recortada para Google Gemini, o vacío si debe operar en simulación
      */
     public Optional<String> resolveEffectiveApiKey(String clientApiKey) {
         if (clientApiKey != null && !clientApiKey.isBlank()) {
-            return Optional.of(clientApiKey.trim());
+            String trimmedClientKey = clientApiKey.trim();
+            if (!trimmedClientKey.startsWith(MANAGED_API_KEY_PREFIX)) {
+                return Optional.of(trimmedClientKey);
+            }
         }
         if (serverApiKey != null && !serverApiKey.isBlank()) {
             return Optional.of(serverApiKey.trim());

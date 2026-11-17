@@ -44,6 +44,19 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Captura las excepciones de autenticación cuando una clave API del Gateway ({@code air_live_...})
+     * es inválida o ha sido revocada, devolviendo un estado HTTP 401 (Unauthorized).
+     *
+     * @param ex excepción de clave API inválida o revocada
+     * @return DTO {@link ErrorResponse} con el detalle del rechazo de autenticación y la marca temporal actual
+     */
+    @ExceptionHandler(InvalidApiKeyException.class)
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
+    public ErrorResponse handleInvalidApiKeyException(InvalidApiKeyException ex) {
+        return new ErrorResponse(ex.getMessage(), LocalDateTime.now());
+    }
+
+    /**
      * Captura errores de deserialización o cuerpo de petición ausente/malformado y devuelve HTTP 400 (Bad Request).
      *
      * @param ex excepción producida al leer el cuerpo de la petición HTTP

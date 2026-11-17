@@ -2,6 +2,7 @@ package com.tuproyecto.airouter.services;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -17,14 +18,20 @@ import static org.mockito.Mockito.when;
 
 import com.tuproyecto.airouter.clients.GeminiRestClient;
 import com.tuproyecto.airouter.exceptions.BudgetExceededException;
+import com.tuproyecto.airouter.exceptions.InvalidApiKeyException;
 import com.tuproyecto.airouter.exceptions.InvalidPromptException;
+import com.tuproyecto.airouter.models.dto.ApiKeyCreatedResponse;
+import com.tuproyecto.airouter.models.dto.ApiKeyResponse;
+import com.tuproyecto.airouter.models.dto.CreateApiKeyRequest;
 import com.tuproyecto.airouter.models.dto.PromptRequest;
 import com.tuproyecto.airouter.models.dto.RouterResponse;
 import com.tuproyecto.airouter.models.dto.RouterStatsResponse;
 import com.tuproyecto.airouter.models.dto.UserBudgetRequest;
 import com.tuproyecto.airouter.models.dto.UserBudgetResponse;
+import com.tuproyecto.airouter.models.entities.ApiKey;
 import com.tuproyecto.airouter.models.entities.RequestLog;
 import com.tuproyecto.airouter.models.entities.UserBudget;
+import com.tuproyecto.airouter.repositories.ApiKeyRepository;
 import com.tuproyecto.airouter.repositories.RequestLogRepository;
 import com.tuproyecto.airouter.repositories.UserBudgetRepository;
 import java.math.BigDecimal;
@@ -845,5 +852,121 @@ class RouterServiceTest {
         // Ahorro neto gracias a la caché: $0.125000 USD (50.0% de ahorro total sobre las 2 peticiones Pro)
         assertEquals(new BigDecimal("0.125000"), stats.estimatedSavingsUsd());
         assertEquals(50.0, stats.savingsPercentage());
+    }
+
+    /**
+     * Verifica la generación criptográfica y almacenamiento seguro SHA-256 de claves API ({@link RouterService#createApiKey(CreateApiKeyRequest)}
+     * y {@link RouterService#getUserApiKeys(String)}):
+     * comprueba que {@code rawApiKey} empieza por {@code "air_live_"} con 41 caracteres totales,
+     * que el {@code keyHash} persistido en {@link ApiKeyRepository} tiene 64 caracteres hexadecimales
+     * y nunca coincide con el secreto en texto plano, y que {@code getUserApiKeys} devuelve únicamente
+     * el {@code keyPrefix} enmascarado.
+     */
+    @Test
+    @DisplayName("Seguridad Claves API (SHA-256): createApiKey debe generar air_live_ de 41 chars, guardar solo hash SHA-256 de 64 chars y enmascarar el prefijo")
+    void shouldGenerateManagedApiKeyPersistOnlySha256HashAndReturnMaskedPrefixInList() {
+        ApiKeyRepository mockApiKeyRepo = mock(ApiKeyRepository.class);
+        routerService.setApiKeyRepository(mockApiKeyRepo);
+
+        ArgumentCaptor<ApiKey> apiKeyCaptor = ArgumentCaptor.forClass(ApiKey.class);
+        when(mockApiKeyRepo.save(apiKeyCaptor.capture())).thenAnswer(invocation -> {
+            ApiKey arg = invocation.getArgument(0);
+            arg.setId(UUID.randomUUID());
+            return arg;
+        });
+
+        ApiKeyCreatedResponse created = routerService.createApiKey(
+                new CreateApiKeyRequest("  dev-user-01  ", "  Microservicio Pagos  ")
+        );
+
+        assertNotNull(created.id());
+        assertEquals("dev-user-01", created.userId());
+        assertEquals("Microservicio Pagos", created.keyName());
+        assertTrue(created.rawApiKey().startsWith("air_live_"));
+        assertEquals(41, created.rawApiKey().length());
+        assertTrue(created.keyPrefix().startsWith("air_live_"));
+        assertTrue(created.keyPrefix().endsWith("..."));
+        assertTrue(created.active());
+
+        ApiKey persistedEntity = apiKeyCaptor.getValue();
+        assertNotNull(persistedEntity.getKeyHash());
+        assertEquals(64, persistedEntity.getKeyHash().length(), "El hash SHA-256 debe tener exactamente 64 caracteres hexadecimales");
+        assertNotEquals(created.rawApiKey(), persistedEntity.getKeyHash(), "El hash guardado jamás debe ser igual a la clave en texto plano");
+        assertEquals(routerService.hashApiKeySha256(created.rawApiKey()), persistedEntity.getKeyHash());
+
+        when(mockApiKeyRepo.findByUserIdOrderByCreatedAtDesc("dev-user-01"))
+                .thenReturn(List.of(persistedEntity));
+
+        List<ApiKeyResponse> listedKeys = routerService.getUserApiKeys("dev-user-01");
+        assertEquals(1, listedKeys.size());
+        assertEquals(created.keyPrefix(), listedKeys.get(0).keyPrefix());
+        assertTrue(listedKeys.get(0).active());
+    }
+
+    /**
+     * Verifica la autenticación de claves API gestionadas ({@code air_live_...}) en {@link RouterService#routePrompt(PromptRequest, String)}:
+     * - Si la clave existe por su hash SHA-256 y está activa ({@code active == true}), procesa la petición con éxito.
+     * - Si la clave no existe o ha sido revocada ({@code active == false}), lanza {@link InvalidApiKeyException}
+     *   sin persistir ningún registro en {@link RequestLogRepository}.
+     */
+    @Test
+    @DisplayName("Seguridad Claves API (Autenticación): routePrompt debe aceptar claves air_live_ activas y rechazar claves inexistentes o revocadas con InvalidApiKeyException")
+    void shouldAuthenticateActiveManagedApiKeyAndRejectRevokedOrUnknownKeyWithInvalidApiKeyException() {
+        ApiKeyRepository mockApiKeyRepo = mock(ApiKeyRepository.class);
+        routerService.setApiKeyRepository(mockApiKeyRepo);
+
+        String validRawKey = "air_live_0123456789abcdef0123456789abcdef";
+        String validHash = routerService.hashApiKeySha256(validRawKey);
+
+        ApiKey activeKeyEntity = ApiKey.builder()
+                .id(UUID.randomUUID())
+                .userId("auth-user")
+                .keyName("Clave Activa")
+                .keyPrefix("air_live_0123...")
+                .keyHash(validHash)
+                .active(true)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        when(mockApiKeyRepo.findByKeyHash(validHash)).thenReturn(Optional.of(activeKeyEntity));
+        when(requestLogRepository.save(any(RequestLog.class))).thenAnswer(invocation -> {
+            RequestLog arg = invocation.getArgument(0);
+            arg.setId(UUID.randomUUID());
+            arg.setCreatedAt(LocalDateTime.now());
+            return arg;
+        });
+
+        // 1. Clave activa -> procesa la petición exitosamente
+        RouterResponse okResponse = routerService.routePrompt(
+                new PromptRequest("auth-user", "Hola con clave válida"),
+                validRawKey
+        );
+        assertEquals(RouterService.MODEL_FAST, okResponse.modelRouted());
+        verify(requestLogRepository, times(1)).save(any(RequestLog.class));
+
+        // 2. Clave revocada (active = false) -> lanza InvalidApiKeyException y no guarda nuevo log
+        activeKeyEntity.setActive(false);
+        assertThrows(
+                InvalidApiKeyException.class,
+                () -> routerService.routePrompt(
+                        new PromptRequest("auth-user", "Hola con clave revocada"),
+                        validRawKey
+                )
+        );
+        verify(requestLogRepository, times(1)).save(any(RequestLog.class));
+
+        // 3. Clave inexistente -> lanza InvalidApiKeyException
+        String unknownRawKey = "air_live_ffffffffffffffffffffffffffffffff";
+        String unknownHash = routerService.hashApiKeySha256(unknownRawKey);
+        when(mockApiKeyRepo.findByKeyHash(unknownHash)).thenReturn(Optional.empty());
+
+        assertThrows(
+                InvalidApiKeyException.class,
+                () -> routerService.routePrompt(
+                        new PromptRequest("auth-user", "Hola con clave desconocida"),
+                        unknownRawKey
+                )
+        );
+        verify(requestLogRepository, times(1)).save(any(RequestLog.class));
     }
 }

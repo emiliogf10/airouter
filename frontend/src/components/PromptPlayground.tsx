@@ -24,6 +24,10 @@ export interface PromptPlaygroundProps {
   quickTrySignal?: number;
   /** Callback opcional invocado cuando cambia el usuario del simulador o se produce un bloqueo presupuestario (402). */
   onUserOrBudgetActivity?: (userId: string) => void;
+  /** Clave API externa inyectada desde el gestor de claves (`ApiKeyManagerCard`) al pulsar "Usar en Simulador". */
+  externalApiKey?: string;
+  /** Señal incremental para forzar la sincronización cuando se vuelve a inyectar la misma clave externa. */
+  externalApiKeySignal?: number;
 }
 
 /** Ejemplo predefinido de baja complejidad para activar el enrutamiento hacia `gemini-2.5-flash`. */
@@ -50,6 +54,8 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
   onPromptSuccess,
   quickTrySignal = 0,
   onUserOrBudgetActivity,
+  externalApiKey,
+  externalApiKeySignal = 0,
 }) => {
   const [userId, setUserId] = useState<string>('demo-user');
   const [apiKey, setApiKey] = useState<string>('');
@@ -68,6 +74,12 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
       setErrorState(null);
     }
   }, [quickTrySignal]);
+
+  useEffect(() => {
+    if (externalApiKey !== undefined && externalApiKey !== '') {
+      setApiKey(externalApiKey);
+    }
+  }, [externalApiKey, externalApiKeySignal]);
 
   /**
    * Gestiona el envío del formulario de evaluación de prompt hacia el backend.
@@ -129,6 +141,9 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
    * @returns Título descriptivo en español para la alerta.
    */
   const getErrorAlertTitle = (status?: number): string => {
+    if (status === 401) {
+      return 'Clave API Inválida o Revocada (HTTP 401 Unauthorized)';
+    }
     if (status === 402) {
       return 'Cortafuegos Presupuestario Activado (HTTP 402 Payment Required)';
     }

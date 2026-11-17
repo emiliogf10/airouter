@@ -65,6 +65,7 @@ El esquema de base de datos está gobernado exclusivamente por **Flyway** median
 * **`V1__create_request_logs_table.sql`**: Crea la tabla `request_logs` (`id`, `user_id`, `prompt_content`, `model_routed`, `tokens_estimated`, `created_at`) y los índices B-Tree de alto rendimiento (`idx_request_logs_user_id`, `idx_request_logs_created_at`, `idx_request_logs_model_routed`).
 * **`V2__create_user_budgets_table.sql`**: Crea la tabla `user_budgets` (`id`, `user_id`, `max_budget_usd`, `auto_downgrade_enabled`, `updated_at`) con restricción única e índice B-Tree sobre `user_id` para el cortafuegos presupuestario FinOps.
 * **`V3__add_cache_hit_to_request_logs.sql`**: Añade la columna `cache_hit` (`BOOLEAN NOT NULL DEFAULT FALSE`) y el índice `idx_request_logs_cache_hit` a `request_logs` para la **Caché Semántica de Coste Cero (*Zero-Cost Cache*)**.
+* **`V4__create_api_keys_table.sql`**: Crea la tabla `api_keys` (`id`, `user_id`, `key_name`, `key_prefix`, `key_hash` SHA-256 único, `active`, `created_at`) para la gestión criptográfica de claves API por usuario sin almacenar secretos en texto plano.
 
 ### Acceso a la Consola H2 (Desarrollo)
 Con el backend en ejecución, puedes inspeccionar la base de datos en memoria desde el navegador:
@@ -139,6 +140,11 @@ Calcula y devuelve las estadísticas agregadas de uso de tokens, distribución d
 Permite consultar y configurar el límite de gasto máximo (`maxBudgetUsd`) para un usuario:
 * **Umbral del 80% (`WARNING_80_DOWNGRADE`):** Si `autoDowngradeEnabled` está activo y el usuario alcanza el 80% de su presupuesto, cualquier prompt complejo se degrada automáticamente a **`gemini-2.5-flash`** para proteger su saldo.
 * **Umbral del 100% (`EXCEEDED_100_BLOCKED`):** Al alcanzar el 100% del presupuesto, `POST /api/v1/router/prompt` bloquea nuevas peticiones con **HTTP `402 Payment Required`**.
+
+### 5. Gestión de Claves API con Hash SHA-256 (`GET` / `POST` / `DELETE /api/v1/router/keys`)
+Permite generar, listar y revocar claves de acceso propias del Gateway (`air_live_<32_hex>`) por usuario:
+* Al crear una clave (`POST /api/v1/router/keys`), el token en texto plano (`rawApiKey`) se muestra **una única vez** y en la base de datos solo se persiste su prefijo enmascarado (`air_live_9f8e...`) y su resumen criptográfico **SHA-256** (`keyHash`).
+* Si se intenta enrutar un prompt (`POST /api/v1/router/prompt`) con una clave `air_live_...` inexistente o revocada (`DELETE /api/v1/router/keys/{keyId}`), el Gateway rechaza la petición con **HTTP `401 Unauthorized`**.
 
 ---
 
