@@ -1,5 +1,8 @@
 package com.tuproyecto.airouter.controllers;
 
+import com.tuproyecto.airouter.models.dto.ApiKeyCreatedResponse;
+import com.tuproyecto.airouter.models.dto.ApiKeyResponse;
+import com.tuproyecto.airouter.models.dto.CreateApiKeyRequest;
 import com.tuproyecto.airouter.models.dto.PromptRequest;
 import com.tuproyecto.airouter.models.dto.RouterResponse;
 import com.tuproyecto.airouter.models.dto.RouterStatsResponse;
@@ -7,8 +10,10 @@ import com.tuproyecto.airouter.models.dto.UserBudgetRequest;
 import com.tuproyecto.airouter.models.dto.UserBudgetResponse;
 import com.tuproyecto.airouter.services.RouterService;
 import java.util.List;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -133,5 +138,42 @@ public class GatewayController {
             @PathVariable String userId,
             @RequestBody(required = false) UserBudgetRequest request) {
         return routerService.updateUserBudget(userId, request);
+    }
+
+    /**
+     * Recupera el listado de claves API emitidas para un usuario ordenadas por fecha descendente,
+     * ocultando el secreto en texto plano y mostrando únicamente el prefijo enmascarado.
+     *
+     * @param userId identificador del usuario propietario de las claves
+     * @return lista de DTOs {@link ApiKeyResponse} del usuario
+     */
+    @GetMapping("/keys/{userId}")
+    @ResponseStatus(HttpStatus.OK)
+    public List<ApiKeyResponse> getUserApiKeys(@PathVariable String userId) {
+        return routerService.getUserApiKeys(userId);
+    }
+
+    /**
+     * Genera una nueva clave API para un usuario ({@code air_live_<32_hex>}), persistiendo en base de datos
+     * únicamente su hash SHA-256 y devolviendo por única vez el secreto en texto plano.
+     *
+     * @param request DTO con el identificador de usuario y el nombre descriptivo de la clave
+     * @return DTO {@link ApiKeyCreatedResponse} incluyendo {@code rawApiKey} con estado HTTP 201 Created
+     */
+    @PostMapping("/keys")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ApiKeyCreatedResponse createApiKey(@RequestBody(required = false) CreateApiKeyRequest request) {
+        return routerService.createApiKey(request);
+    }
+
+    /**
+     * Revoca (desactiva) una clave API existente a partir de su identificador único (UUID).
+     *
+     * @param keyId identificador único universal de la clave API a revocar
+     */
+    @DeleteMapping("/keys/{keyId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void revokeApiKey(@PathVariable UUID keyId) {
+        routerService.revokeApiKey(keyId);
     }
 }

@@ -49,6 +49,44 @@ export interface UserBudgetResponse {
 }
 
 /**
+ * DTO de entrada para generar una nueva clave API del Gateway (`POST /api/v1/router/keys`).
+ */
+export interface CreateApiKeyRequest {
+  /** Identificador del usuario propietario de la clave. */
+  userId: string;
+  /** Nombre descriptivo de la clave (ej. "Producción App Web"). */
+  keyName: string;
+}
+
+/**
+ * DTO de salida que representa los metadatos seguros de una clave API almacenada (`GET /api/v1/router/keys/{userId}`).
+ * Por seguridad, nunca incluye el secreto en texto plano ni el hash SHA-256 completo.
+ */
+export interface ApiKeyResponse {
+  /** Identificador único universal (UUID) de la clave API. */
+  id: string;
+  /** Identificador del usuario propietario de la clave. */
+  userId: string;
+  /** Nombre descriptivo asignado a la clave. */
+  keyName: string;
+  /** Prefijo visible enmascarado de la clave (ej. `air_live_9f8e...`). */
+  keyPrefix: string;
+  /** Indica si la clave se encuentra activa (`true`) o revocada (`false`). */
+  active: boolean;
+  /** Fecha y hora ISO de creación de la clave. */
+  createdAt: string;
+}
+
+/**
+ * DTO de salida devuelto exclusivamente en el momento de crear una clave (`POST /api/v1/router/keys`).
+ * Incluye por única vez el token completo `rawApiKey` antes de que solo su hash SHA-256 quede persistido.
+ */
+export interface ApiKeyCreatedResponse extends ApiKeyResponse {
+  /** Token secreto completo en texto plano (`air_live_<32_hex_chars>`), mostrado una única vez al crear la clave. */
+  rawApiKey: string;
+}
+
+/**
  * DTO de entrada que representa una solicitud de evaluación y enrutamiento de un prompt hacia el backend.
  */
 export interface PromptRequest {
@@ -112,7 +150,7 @@ export interface RouterStatsResponse {
 
 /**
  * DTO de respuesta estandarizado devuelto por el backend cuando ocurre un error de validación (HTTP 400),
- * bloqueo presupuestario (HTTP 402 Payment Required) o límite de tasa (HTTP 429 Too Many Requests).
+ * clave API inválida/revocada (HTTP 401), bloqueo presupuestario (HTTP 402 Payment Required) o límite de tasa (HTTP 429).
  */
 export interface ErrorResponse {
   /** Descripción legible en español del error ocurrido. */

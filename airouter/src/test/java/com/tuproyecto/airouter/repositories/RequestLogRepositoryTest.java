@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.tuproyecto.airouter.models.entities.ApiKey;
 import com.tuproyecto.airouter.models.entities.RequestLog;
 import com.tuproyecto.airouter.models.entities.UserBudget;
 import com.tuproyecto.airouter.services.RouterService;
@@ -44,12 +45,19 @@ class RequestLogRepositoryTest {
     private UserBudgetRepository userBudgetRepository;
 
     /**
-     * Limpia todos los registros de las tablas {@code request_logs} y {@code user_budgets} antes de cada prueba.
+     * Repositorio JPA de claves API con hash SHA-256 (migración Flyway V4) bajo prueba.
+     */
+    @Autowired
+    private ApiKeyRepository apiKeyRepository;
+
+    /**
+     * Limpia todos los registros de las tablas {@code request_logs}, {@code user_budgets} y {@code api_keys} antes de cada prueba.
      */
     @BeforeEach
     void setUp() {
         requestLogRepository.deleteAll();
         userBudgetRepository.deleteAll();
+        apiKeyRepository.deleteAll();
     }
 
     /**
@@ -253,5 +261,44 @@ class RequestLogRepositoryTest {
 
         assertFalse(savedMiss.getCacheHit(), "El campo cacheHit debe persistirse como false cuando es nulo");
         assertTrue(savedHit.getCacheHit(), "El campo cacheHit debe persistirse como true en un acierto de caché");
+    }
+
+    /**
+     * Verifica la migración Flyway {@code V4__create_api_keys_table.sql} y las operaciones de
+     * {@link ApiKeyRepository}: guardado de una entidad {@link ApiKey} con hash SHA-256 de 64 caracteres,
+     * búsqueda mediante {@link ApiKeyRepository#findByKeyHash(String)}, listado por usuario con
+     * {@link ApiKeyRepository#findByUserIdOrderByCreatedAtDesc(String)} y contrato {@code equals}/{@code hashCode}.
+     */
+    @Test
+    @DisplayName("Migración V4 (api_keys): Debe persistir ApiKey, buscar por keyHash SHA-256 y listar por userId")
+    void shouldSaveFindByKeyHashAndListApiKeysByUserId() {
+        String sampleSha256Hash = "a1b2c3d4e5f60123456789abcdef0123456789abcdef0123456789abcdef0123";
+
+        ApiKey apiKey = ApiKey.builder()
+                .userId("sec-user-01")
+                .keyName("Clave Backend Producción")
+                .keyPrefix("air_live_9f8e...")
+                .keyHash(sampleSha256Hash)
+                .active(null)
+                .createdAt(null)
+                .build();
+
+        ApiKey saved = apiKeyRepository.saveAndFlush(apiKey);
+
+        assertNotNull(saved.getId(), "El UUID de ApiKey debe generarse automáticamente");
+        assertNotNull(saved.getCreatedAt(), "El campo createdAt debe poblarse mediante @PrePersist");
+        assertTrue(saved.getActive(), "El campo active debe inicializarse a true por defecto");
+
+        Optional<ApiKey> foundByHash = apiKeyRepository.findByKeyHash(sampleSha256Hash);
+        assertTrue(foundByHash.isPresent());
+        assertEquals("sec-user-01", foundByHash.get().getUserId());
+        assertEquals("Clave Backend Producción", foundByHash.get().getKeyName());
+        assertEquals("air_live_9f8e...", foundByHash.get().getKeyPrefix());
+        assertEquals(saved, foundByHash.get());
+        assertEquals(saved.hashCode(), foundByHash.get().hashCode());
+
+        List<ApiKey> userKeys = apiKeyRepository.findByUserIdOrderByCreatedAtDesc("sec-user-01");
+        assertEquals(1, userKeys.size());
+        assertEquals(saved.getId(), userKeys.get(0).getId());
     }
 }

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertCircle } from 'lucide-react';
+import { ApiKeyManagerCard } from './components/ApiKeyManagerCard';
 import { BudgetControlCard } from './components/BudgetControlCard';
 import { Header } from './components/Header';
 import { LogInspectorDrawer } from './components/LogInspectorDrawer';
@@ -11,9 +12,11 @@ import {
   createDefaultUserBudget,
   fetchLogs,
   fetchStats,
+  fetchUserApiKeys,
   fetchUserBudget,
 } from './services/api';
 import type {
+  ApiKeyResponse,
   CurrencyCode,
   RouterResponse,
   RouterStatsResponse,
@@ -44,6 +47,7 @@ const INITIAL_STATS: RouterStatsResponse = {
  * - El selector interactivo de moneda (`EUR €` seleccionado por defecto o `USD $`).
  * - El filtrado reactivo de telemetría e historial por usuario (`userId`).
  * - El panel de control de Cortafuegos Presupuestario FinOps (`BudgetControlCard`).
+ * - El panel gestor de Claves API persistidas con hash SHA-256 (`ApiKeyManagerCard`).
  * - El visor modal de auditoría detallada (`LogInspectorDrawer`) y exportación CSV segura.
  * - La sincronización automática de estadísticas (`GET /api/v1/router/stats`) y registros (`GET /api/v1/router/logs`).
  *
@@ -54,12 +58,18 @@ export const App: React.FC = () => {
   const [currency, setCurrency] = useState<CurrencyCode>('EUR');
   /** Filtro opcional por identificador de usuario (`userId`). */
   const [filterUserId, setFilterUserId] = useState<string>('');
-  /** Usuario actualmente inspeccionado en el panel de presupuesto FinOps (`demo-user` por defecto). */
+  /** Usuario actualmente inspeccionado en los paneles de presupuesto y claves (`demo-user` por defecto). */
   const [budgetUserId, setBudgetUserId] = useState<string>('demo-user');
   /** Estado del presupuesto FinOps del usuario gestionado. */
   const [userBudget, setUserBudget] = useState<UserBudgetResponse>(() =>
     createDefaultUserBudget('demo-user'),
   );
+  /** Lista de claves API asociadas al usuario activo. */
+  const [userApiKeys, setUserApiKeys] = useState<ApiKeyResponse[]>([]);
+  /** Clave API seleccionada desde el gestor para inyectarse en el simulador. */
+  const [playgroundExternalApiKey, setPlaygroundExternalApiKey] = useState<string>('');
+  /** Señal incremental para sincronizar la inyección de clave API en el simulador. */
+  const [playgroundApiKeySignal, setPlaygroundApiKeySignal] = useState<number>(0);
   /** Métricas agregadas de consumo de tokens y ahorro financiero. */
   const [stats, setStats] = useState<RouterStatsResponse>(INITIAL_STATS);
   /** Historial reciente de peticiones evaluadas por el Gateway. */
@@ -88,9 +98,20 @@ export const App: React.FC = () => {
   }, []);
 
   /**
+   * Sincroniza de forma aislada las claves API de un usuario específico.
+   *
+   * @param targetUser Identificador del usuario cuyas claves se desean cargar.
+   */
+  const loadApiKeysForUser = useCallback(async (targetUser: string) => {
+    const effectiveUser = targetUser.trim() || 'demo-user';
+    const keysData = await fetchUserApiKeys(effectiveUser);
+    setUserApiKeys(keysData);
+  }, []);
+
+  /**
    * Consulta en paralelo las métricas (`/stats`) y el historial (`/logs`) del backend,
    * aplicando el filtro `filterUserId` cuando está definido, y posteriormente actualiza
-   * el estado del presupuesto FinOps del usuario activo.
+   * el estado del presupuesto FinOps y las claves API del usuario activo.
    *
    * @param userFilter Identificador de usuario opcional para filtrar los datos.
    */
@@ -119,8 +140,9 @@ export const App: React.FC = () => {
       }
 
       void loadBudgetForUser(effectiveBudgetUser);
+      void loadApiKeysForUser(effectiveBudgetUser);
     },
-    [budgetUserId, loadBudgetForUser],
+    [budgetUserId, loadApiKeysForUser, loadBudgetForUser],
   );
 
   useEffect(() => {
@@ -140,8 +162,9 @@ export const App: React.FC = () => {
       setBudgetUserId(targetUser);
       void loadDashboardData(filterUserId);
       void loadBudgetForUser(targetUser);
+      void loadApiKeysForUser(targetUser);
     },
-    [filterUserId, loadBudgetForUser, loadDashboardData],
+    [filterUserId, loadApiKeysForUser, loadBudgetForUser, loadDashboardData],
   );
 
   /**
@@ -152,9 +175,22 @@ export const App: React.FC = () => {
       const cleanUser = targetUser.trim() || 'demo-user';
       setBudgetUserId(cleanUser);
       void loadBudgetForUser(cleanUser);
+      void loadApiKeysForUser(cleanUser);
     },
-    [loadBudgetForUser],
+    [loadApiKeysForUser, loadBudgetForUser],
   );
+
+  /**
+   * Inyecta una clave recién generada en el campo `X-API-Key` del simulador y enfoca el input.
+   *
+   * @param rawApiKey Token secreto completo (`air_live_...`).
+   */
+  const handleUseKeyInPlayground = useCallback((rawApiKey: string) => {
+    setPlaygroundExternalApiKey(rawApiKey);
+    setPlaygroundApiKeySignal((prev) => prev + 1);
+    const input = document.getElementById('playground-api-key');
+    input?.focus();
+  }, []);
 
   /**
    * Carga un prompt de ejemplo en el simulador y desplaza suavemente el foco al área de texto.
@@ -192,12 +228,20 @@ export const App: React.FC = () => {
         {/* Cuadrícula superior de métricas clave con MetricCard */}
         <StatsCards stats={stats} currency={currency} isLoading={isLoading} />
 
-        {/* Panel de Control Presupuestario FinOps por Usuario */}
-        <BudgetControlCard
-          budget={userBudget}
-          currency={currency}
-          onBudgetUpdated={setUserBudget}
-        />
+        {/* Gobernanza por Usuario: Cortafuegos Presupuestario FinOps + Gestor de Claves API SHA-256 */}
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <BudgetControlCard
+            budget={userBudget}
+            currency={currency}
+            onBudgetUpdated={setUserBudget}
+          />
+          <ApiKeyManagerCard
+            userId={budgetUserId}
+            apiKeys={userApiKeys}
+            onKeysChanged={() => void loadApiKeysForUser(budgetUserId)}
+            onUseKeyInPlayground={handleUseKeyInPlayground}
+          />
+        </div>
 
         {/* Sección central: Simulador interactivo + Distribución por modelo */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -205,6 +249,8 @@ export const App: React.FC = () => {
             onPromptSuccess={handlePromptSuccess}
             quickTrySignal={quickTrySignal}
             onUserOrBudgetActivity={handleBudgetActivity}
+            externalApiKey={playgroundExternalApiKey}
+            externalApiKeySignal={playgroundApiKeySignal}
           />
           <ModelDistributionChart stats={stats} isLoading={isLoading} />
         </div>

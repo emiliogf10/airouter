@@ -844,4 +844,111 @@ describe('AI Cost Router Dashboard - Pruebas de Integración', () => {
       );
     });
   });
+
+  /**
+   * Verifica el gestor de Claves API (`ApiKeyManagerCard`, `data-testid="api-key-manager-card"`):
+   * - Creación de una nueva clave introduciendo un nombre en `data-testid="apikey-name-input"` y pulsando
+   *   `data-testid="apikey-create-button"`, mostrando el banner de visualización única (`data-testid="newly-created-apikey-banner"`)
+   *   con el `rawApiKey` (`data-testid="newly-created-apikey-raw"`).
+   * - Inyección rápida en el simulador al pulsar `data-testid="use-apikey-in-playground-button"`, rellenando
+   *   automáticamente `data-testid="playground-apikey-input"`.
+   * - Alerta `data-testid="playground-error-alert"` con `"Clave API Inválida o Revocada (HTTP 401 Unauthorized)"`
+   *   cuando `POST /api/v1/router/prompt` responde con HTTP 401.
+   */
+  it('permite crear una clave API en ApiKeyManagerCard, inyectarla en el simulador y muestra alerta ante HTTP 401 Unauthorized', async () => {
+    const generatedRawKey = 'air_live_9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c';
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/keys') && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            id: 'key-uuid-1234',
+            userId: 'demo-user',
+            keyName: 'Producción App Web',
+            keyPrefix: 'air_live_9f8e...',
+            rawApiKey: generatedRawKey,
+            active: true,
+            createdAt: '2026-10-20T23:20:00',
+          }),
+          { status: 201, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+
+      if (url.includes('/keys/')) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 'key-uuid-1234',
+              userId: 'demo-user',
+              keyName: 'Producción App Web',
+              keyPrefix: 'air_live_9f8e...',
+              active: true,
+              createdAt: '2026-10-20T23:20:00',
+            },
+          ]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+
+      if (url.includes('/prompt') && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify({
+            message:
+              "La clave API proporcionada ('air_live_9f8e...') es inválida o ha sido revocada.",
+            timestamp: '2026-10-20T23:21:00',
+          }),
+          { status: 401, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+
+      if (url.includes('/stats')) {
+        return new Response(JSON.stringify(MOCK_GLOBAL_STATS), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify(MOCK_INITIAL_LOGS), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('api-key-manager-card')).toBeInTheDocument();
+    });
+
+    // 1. Crear una nueva clave API
+    const nameInput = screen.getByTestId('apikey-name-input');
+    await userEvent.type(nameInput, 'Producción App Web');
+    await userEvent.click(screen.getByTestId('apikey-create-button'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('newly-created-apikey-banner')).toBeInTheDocument();
+      expect(screen.getByTestId('newly-created-apikey-raw')).toHaveTextContent(generatedRawKey);
+    });
+
+    // 2. Pulsar "Usar en Simulador" y verificar que rellena playground-apikey-input
+    await userEvent.click(screen.getByTestId('use-apikey-in-playground-button'));
+    expect(screen.getByTestId('playground-apikey-input')).toHaveValue(generatedRawKey);
+
+    // 3. Enviar prompt y verificar alerta HTTP 401 Unauthorized
+    await userEvent.click(screen.getByTestId('preset-flash-button'));
+    await userEvent.click(screen.getByTestId('submit-prompt-button'));
+
+    await waitFor(() => {
+      const alertBox = screen.getByTestId('playground-error-alert');
+      expect(alertBox).toBeInTheDocument();
+      expect(alertBox).toHaveTextContent(
+        'Clave API Inválida o Revocada (HTTP 401 Unauthorized)',
+      );
+      expect(alertBox).toHaveTextContent(
+        "La clave API proporcionada ('air_live_9f8e...') es inválida o ha sido revocada.",
+      );
+    });
+  });
 });

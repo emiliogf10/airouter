@@ -8,6 +8,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -16,11 +17,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.tuproyecto.airouter.models.dto.PromptRequest;
 import com.tuproyecto.airouter.models.dto.RouterResponse;
+import com.tuproyecto.airouter.repositories.ApiKeyRepository;
 import com.tuproyecto.airouter.repositories.RequestLogRepository;
 import com.tuproyecto.airouter.repositories.UserBudgetRepository;
 import com.tuproyecto.airouter.services.RouterService;
 import java.time.LocalDateTime;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -66,18 +70,25 @@ class GatewayControllerTest {
     private UserBudgetRepository userBudgetRepository;
 
     /**
+     * Repositorio JPA de claves API utilizado para limpiar el estado antes de cada prueba.
+     */
+    @Autowired
+    private ApiKeyRepository apiKeyRepository;
+
+    /**
      * Cliente de pruebas MVC para simular peticiones HTTP contra el controlador.
      */
     private MockMvc mockMvc;
 
     /**
-     * Inicializa {@link MockMvc} y vacía las tablas {@code request_logs} y {@code user_budgets} antes de cada test.
+     * Inicializa {@link MockMvc} y vacía las tablas {@code request_logs}, {@code user_budgets} y {@code api_keys} antes de cada test.
      */
     @BeforeEach
     void setUp() {
         this.mockMvc = MockMvcBuilders.webAppContextSetup(this.webApplicationContext).build();
         this.requestLogRepository.deleteAll();
         this.userBudgetRepository.deleteAll();
+        this.apiKeyRepository.deleteAll();
     }
 
     /**
@@ -484,5 +495,86 @@ class GatewayControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalRequests", is(2)))
                 .andExpect(jsonPath("$.cacheHits", is(1)));
+    }
+
+    /**
+     * Verifica de extremo a extremo el ciclo de vida completo de una clave API gestionada con hash SHA-256:
+     * <ol>
+     *   <li>{@code POST /api/v1/router/keys} devuelve {@code 201 Created} con {@code rawApiKey} ({@code air_live_...}).</li>
+     *   <li>{@code GET /api/v1/router/keys/{userId}} devuelve {@code 200 OK} mostrando {@code keyPrefix} sin exponer {@code rawApiKey}.</li>
+     *   <li>{@code POST /api/v1/router/prompt} con la {@code rawApiKey} activa en {@code X-API-Key} responde {@code 200 OK}.</li>
+     *   <li>{@code DELETE /api/v1/router/keys/{keyId}} revoca la clave devolviendo {@code 204 No Content}.</li>
+     *   <li>{@code POST /api/v1/router/prompt} con la {@code rawApiKey} revocada es rechazado con {@code 401 Unauthorized}.</li>
+     * </ol>
+     *
+     * @throws Exception si ocurre un error durante las peticiones simuladas
+     */
+    @Test
+    @DisplayName("Ciclo E2E Claves API: Crear (201), Listar sin secreto (200), Enrutar (200), Revocar (204) y Rechazar con 401 Unauthorized")
+    void shouldCompleteApiKeyLifecycleAndReturn401WhenRevokedKeyIsUsed() throws Exception {
+        String createKeyPayload = """
+                {
+                    "userId": "apikey-e2e-user",
+                    "keyName": "Clave Integración E2E"
+                }
+                """;
+
+        // 1. Crear clave API -> 201 Created con rawApiKey
+        String createResponseJson = mockMvc.perform(post("/api/v1/router/keys")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createKeyPayload))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id", notNullValue()))
+                .andExpect(jsonPath("$.userId", is("apikey-e2e-user")))
+                .andExpect(jsonPath("$.keyName", is("Clave Integración E2E")))
+                .andExpect(jsonPath("$.rawApiKey", containsString("air_live_")))
+                .andExpect(jsonPath("$.active", is(true)))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        Matcher idMatcher = Pattern.compile("\"id\"\\s*:\\s*\"([^\"]+)\"").matcher(createResponseJson);
+        Matcher rawKeyMatcher = Pattern.compile("\"rawApiKey\"\\s*:\\s*\"([^\"]+)\"").matcher(createResponseJson);
+        if (!idMatcher.find() || !rawKeyMatcher.find()) {
+            throw new AssertionError("No se encontraron id o rawApiKey en la respuesta JSON: " + createResponseJson);
+        }
+        String keyId = idMatcher.group(1);
+        String rawApiKey = rawKeyMatcher.group(1);
+
+        // 2. Listar claves del usuario -> 200 OK con keyPrefix y sin rawApiKey
+        mockMvc.perform(get("/api/v1/router/keys/apikey-e2e-user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].id", is(keyId)))
+                .andExpect(jsonPath("$[0].keyPrefix", containsString("air_live_")))
+                .andExpect(jsonPath("$[0].active", is(true)))
+                .andExpect(jsonPath("$[0].rawApiKey").doesNotExist());
+
+        // 3. Enviar prompt con la clave recién creada activa -> 200 OK
+        String promptPayload = """
+                {
+                    "userId": "apikey-e2e-user",
+                    "prompt": "Consulta autenticada con air_live_"
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/router/prompt")
+                        .header(GatewayController.API_KEY_HEADER, rawApiKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(promptPayload))
+                .andExpect(status().isOk());
+
+        // 4. Revocar la clave -> 204 No Content
+        mockMvc.perform(delete("/api/v1/router/keys/" + keyId))
+                .andExpect(status().isNoContent());
+
+        // 5. Intentar enviar un prompt con la clave ya revocada -> 401 Unauthorized
+        mockMvc.perform(post("/api/v1/router/prompt")
+                        .header(GatewayController.API_KEY_HEADER, rawApiKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(promptPayload))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message", containsString("inválida o ha sido revocada")))
+                .andExpect(jsonPath("$.timestamp", notNullValue()));
     }
 }

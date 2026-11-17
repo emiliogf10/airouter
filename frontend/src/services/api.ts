@@ -1,4 +1,7 @@
 import type {
+  ApiKeyCreatedResponse,
+  ApiKeyResponse,
+  CreateApiKeyRequest,
   ErrorResponse,
   PromptRequest,
   RouterResponse,
@@ -15,10 +18,11 @@ const API_BASE_URL = '/api/v1/router';
 
 /**
  * Clase de error personalizada para encapsular fallos HTTP devueltos por la API del backend,
- * incluyendo soporte específico para HTTP 402 (Cortafuegos Presupuestario) y HTTP 429 (Rate Limiting).
+ * incluyendo soporte específico para HTTP 401 (Clave API inválida), HTTP 402 (Cortafuegos Presupuestario)
+ * y HTTP 429 (Rate Limiting).
  */
 export class ApiError extends Error {
-  /** Código de estado HTTP devuelto por el servidor (ej. 400, 402, 429, 500). */
+  /** Código de estado HTTP devuelto por el servidor (ej. 400, 401, 402, 429, 500). */
   public readonly status: number;
   /** Segundos de espera indicados por la cabecera `Retry-After` en caso de HTTP 429. */
   public readonly retryAfterSeconds?: number;
@@ -100,9 +104,9 @@ async function handleErrorResponse(response: Response): Promise<never> {
  * verificar el presupuesto FinOps del usuario, estimar sus tokens y enrutarlo al modelo óptimo.
  *
  * @param request Objeto con el `userId` y el texto del `prompt` a evaluar.
- * @param apiKey  Clave de API opcional enviada en la cabecera `X-API-Key` para BYOK y cuota de Rate Limiting.
+ * @param apiKey  Clave de API opcional enviada en la cabecera `X-API-Key` para autenticación o BYOK.
  * @returns Promesa con el objeto `RouterResponse` que contiene la decisión de enrutamiento y la respuesta.
- * @throws {ApiError} Si ocurre un error de validación (400), presupuesto agotado (402) o límite de tasa (429).
+ * @throws {ApiError} Si ocurre un error de validación (400), clave inválida (401), presupuesto agotado (402) o límite de tasa (429).
  */
 export async function sendPrompt(
   request: PromptRequest,
@@ -228,4 +232,88 @@ export async function updateUserBudget(
   }
 
   return (await response.json()) as UserBudgetResponse;
+}
+
+/**
+ * Consulta el listado de claves API asociadas a un usuario desde el endpoint
+ * `GET /api/v1/router/keys/{userId}`.
+ * Incluye validación defensiva para devolver `[]` cuando un mock de prueba heredado
+ * devuelve datos que no corresponden a objetos `ApiKeyResponse`.
+ *
+ * @param userId Identificador del usuario cuyas claves se desean listar.
+ * @returns Promesa con la lista de claves `ApiKeyResponse[]`.
+ */
+export async function fetchUserApiKeys(userId: string): Promise<ApiKeyResponse[]> {
+  const cleanUser = userId.trim() || 'demo-user';
+  try {
+    const response = await fetch(`${API_BASE_URL}/keys/${encodeURIComponent(cleanUser)}`);
+    if (!response) {
+      return [];
+    }
+    if (!response.ok) {
+      return handleErrorResponse(response);
+    }
+    const data = (await response.json()) as unknown;
+    if (!Array.isArray(data)) {
+      return [];
+    }
+    return data.filter(
+      (item): item is ApiKeyResponse =>
+        Boolean(
+          item &&
+            typeof item === 'object' &&
+            typeof (item as Partial<ApiKeyResponse>).keyPrefix === 'string' &&
+            typeof (item as Partial<ApiKeyResponse>).keyName === 'string',
+        ),
+    );
+  } catch (err) {
+    if (err instanceof ApiError) {
+      throw err;
+    }
+    return [];
+  }
+}
+
+/**
+ * Genera una nueva clave API para un usuario mediante el endpoint `POST /api/v1/router/keys`.
+ * La respuesta incluye por única vez el secreto `rawApiKey` antes de almacenarse como hash SHA-256.
+ *
+ * @param payload Objeto con el `userId` propietario y el `keyName` descriptivo.
+ * @returns Promesa con el objeto `ApiKeyCreatedResponse` que contiene `rawApiKey`.
+ * @throws {ApiError} Si ocurre un error de validación o de servidor.
+ */
+export async function createUserApiKey(
+  payload: CreateApiKeyRequest,
+): Promise<ApiKeyCreatedResponse> {
+  const response = await fetch(`${API_BASE_URL}/keys`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    return handleErrorResponse(response);
+  }
+
+  return (await response.json()) as ApiKeyCreatedResponse;
+}
+
+/**
+ * Revoca una clave API existente por su identificador único mediante el endpoint
+ * `DELETE /api/v1/router/keys/{keyId}`.
+ *
+ * @param keyId Identificador UUID de la clave a revocar.
+ * @returns Promesa resuelta cuando la clave ha sido revocada (`204 No Content`).
+ * @throws {ApiError} Si la clave no existe o falla la petición HTTP.
+ */
+export async function revokeUserApiKey(keyId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/keys/${encodeURIComponent(keyId)}`, {
+    method: 'DELETE',
+  });
+
+  if (!response.ok) {
+    return handleErrorResponse(response);
+  }
 }

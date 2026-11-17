@@ -42,6 +42,14 @@ public class SecurityConfig implements WebMvcConfigurer {
                 .allowCredentials(true)
                 .maxAge(3600);
 
+        registry.addMapping("/api/v1/router/keys/**")
+                .allowedOrigins(allowedOrigins)
+                .allowedMethods("GET", "POST", "DELETE", "OPTIONS")
+                .allowedHeaders("Content-Type", "X-API-Key", "Authorization", "Accept")
+                .exposedHeaders("Retry-After")
+                .allowCredentials(true)
+                .maxAge(3600);
+
         registry.addMapping("/api/v1/**")
                 .allowedOrigins(allowedOrigins)
                 .allowedMethods("GET", "POST", "OPTIONS")

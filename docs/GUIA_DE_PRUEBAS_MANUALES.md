@@ -126,3 +126,18 @@ Abre tu navegador en: 👉 **`http://localhost:5173`**
 - [ ] **9.3. Conmutador de Tema Claro / Oscuro (`Claro` ☀️ / `Oscuro` 🌙):**
   * En la barra superior derecha (junto al selector `EUR € / USD $`), pulsa el botón **`Claro`** (icono de Sol).
   * Comprueba que toda la interfaz cambia suavemente al tema claro de alto contraste, y al volver a pulsarlo (**`Oscuro`**) regresa a la estética oscura tipo Vercel.
+
+---
+
+### 10. Gestor de Claves API con Hash SHA-256 (`ApiKeyManagerCard` y Bloqueo `HTTP 401`)
+- [ ] **10.1. Emitir una nueva API Key:**
+  * En el panel **"Gestor de Claves API (SHA-256)"** (situado junto al panel de presupuesto), escribe `"Clave Producción"` en el campo de nombre y pulsa **`Generar API Key`**.
+  * Comprueba que aparece el banner verde de **Visualización Única** mostrando tu clave completa (`air_live_...`) y que en la lista inferior solo aparece el prefijo enmascarado (`air_live_xxxx...`) con estado **`Activa`**.
+- [ ] **10.2. Probar la clave en el Simulador:**
+  * Pulsa el botón **`Usar en Simulador`** dentro del banner verde: verifica que la clave se copia automáticamente al campo `X-API-Key` del simulador inferior.
+  * Pulsa **`Ejecutar enrutamiento`** y comprueba que la petición se procesa con éxito (`200 OK`).
+- [ ] **10.3. Revocar la clave y verificar bloqueo `HTTP 401 Unauthorized`:**
+  * En la lista de claves del panel **"Gestor de Claves API"**, pulsa el botón **`Revocar`** de esa clave: verás que su estado cambia a **`Revocada`**.
+  * Con esa misma clave aún puesta en el campo `X-API-Key` del simulador, vuelve a pulsar **`Ejecutar enrutamiento`**.
+  * **Resultado esperado:** El Gateway rechaza la petición y muestra la alerta roja **`Clave API Inválida o Revocada (HTTP 401 Unauthorized)`**.
+  * Limpia el campo `X-API-Key` para seguir operando normalmente.
