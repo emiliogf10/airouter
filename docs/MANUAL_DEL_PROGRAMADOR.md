@@ -1,174 +1,168 @@
 # 🛠️ Manual del Programador — AI Cost Router
 
-Este documento constituye la referencia técnica oficial de **AI Cost Router** para desarrolladores, arquitectos de software e ingenieros de QA. Describe la arquitectura interna, el modelo de datos, el motor de enrutamiento y costes, las políticas de seguridad y la estructura del Frontend.
+Este documento constituye la especificación técnica completa de **AI Cost Router**. Describe la arquitectura interna del sistema, el esquema de base de datos gobernado por Flyway, los algoritmos de enrutamiento, caché semántica y FinOps, la arquitectura de seguridad, el diseño del Frontend y el pipeline CI/CD.
 
 ---
 
 ## 🏗️ 1. Arquitectura General del Sistema
 
-**AI Cost Router** sigue una arquitectura desacoplada **Full-Stack** dividida en dos aplicaciones principales dentro del monorrepo:
+**AI Cost Router** implementa una arquitectura **Full-Stack desacoplada** organizada en un monorrepo con separación estricta de responsabilidades:
 
 ```mermaid
-flowchart LR
-    subgraph Frontend ["Frontend (React 19 + Vite :5173)"]
-        UI["Dashboard Minimalista (Tailwind v4)"]
-        Curr["Conversor Divisa (EUR € / USD $)"]
-        API_Client["Cliente HTTP (src/services/api.ts)"]
+flowchart TB
+    subgraph Client ["Frontend (React 19 + Vite + Tailwind v4 :5173)"]
+        UI["Dashboard Minimalista (App.tsx)"]
+        SubC["MetricCard / BudgetControlCard / PromptPlayground / RecentLogsTable"]
+        Curr["Conversor Bidireccional EUR € <-> USD $ (currency.ts)"]
+        APIClient["Cliente HTTP REST (services/api.ts)"]
     end
 
-    subgraph Backend ["Backend API Gateway (Spring Boot 4.1.1 :8080)"]
-        Sec["SecurityConfig (CORS) + RateLimitingFilter (429)"]
+    subgraph Gateway ["Backend API Gateway (Java 21 + Spring Boot 4.1.1 :8080)"]
+        Sec["SecurityConfig (CORS) + RateLimitingFilter (HTTP 429 + Retry-After)"]
         Ctrl["GatewayController (/api/v1/router)"]
-        Svc["RouterService (Heurística + Costes BigDecimal)"]
-        Repo["RequestLogRepository (Spring Data JPA)"]
+        Err["GlobalExceptionHandler (HTTP 400 / 402 / 429 / 500)"]
+        Svc["RouterService (Heurística + Caché 0€ + FinOps 80%/100% + Costes BigDecimal)"]
+        GemClient["GeminiRestClient (RestClient HTTP Híbrido BYOK)"]
+        RepoLog["RequestLogRepository (JPA)"]
+        RepoBud["UserBudgetRepository (JPA)"]
     end
 
-    subgraph Data ["Persistencia (Flyway + H2 / PostgreSQL)"]
-        DB[("Tabla request_logs + Índices B-Tree")]
+    subgraph Storage ["Base de Datos (Flyway + H2 / PostgreSQL)"]
+        T1[("Tabla request_logs (V1, V3)")]
+        T2[("Tabla user_budgets (V2)")]
     end
 
-    UI --> Curr
-    UI --> API_Client
-    API_Client -- "REST JSON + X-API-Key" --> Sec
+    subgraph External ["Proveedor Externo IA"]
+        GeminiAPI["Google Gemini API (/v1beta/models/{model}:generateContent)"]
+    end
+
+    UI --> SubC
+    SubC --> Curr
+    SubC --> APIClient
+    APIClient -- "JSON + X-API-Key" --> Sec
     Sec --> Ctrl
     Ctrl --> Svc
-    Svc --> Repo
-    Repo --> DB
+    Ctrl -.-> Err
+    Svc --> RepoBud
+    Svc --> RepoLog
+    Svc -- "Nivel 1 (BYOK) / Nivel 2 (Server Key)" --> GemClient
+    GemClient -- "x-goog-api-key" --> GeminiAPI
+    RepoLog --> T1
+    RepoBud --> T2
 ```
 
-### Stack Tecnológico
-| Capa | Tecnologías Clave |
-| :--- | :--- |
-| **Backend (`airouter/`)** | Java 21, Spring Boot 4.1.1 (WebMVC, Data JPA, Validation, Security Filter), Lombok, Maven Wrapper. |
-| **Base de Datos** | Flyway (`spring-boot-starter-flyway` + `flyway-core`), H2 en memoria (`jdbc:h2:mem:airouterdb`) en desarrollo/tests, preparado para PostgreSQL en producción. Validación estricta `spring.jpa.hibernate.ddl-auto=validate`. |
-| **Frontend (`frontend/`)** | React 19, TypeScript 5.9, Vite 8, Tailwind CSS v4 (`@tailwindcss/vite`), Lucide React, Recharts. |
-| **Testing / QA** | Backend: JUnit 5, Mockito, Spring MockMvc, AssertJ (38 tests). Frontend: Vitest, React Testing Library, jsdom (10 tests). |
+### Stack Tecnológico Detallado
+| Dominio | Tecnología y Versión | Propósito |
+| :--- | :--- | :--- |
+| **Backend Core** | Java 21 LTS + Spring Boot 4.1.1 | API REST, inyección de dependencias, validación Jakarta y cliente HTTP (`RestClient`). |
+| **Persistencia** | Spring Data JPA + Hibernate (`ddl-auto=validate`) | Mapeo objeto-relacional con validación estricta del esquema al arranque. |
+| **Migraciones SQL** | Flyway (`spring-boot-starter-flyway` + `flyway-core`) | Control versionado determinista del esquema SQL (`V1`, `V2`, `V3`). |
+| **Motor BD** | H2 Database (en memoria `airouterdb`) / PostgreSQL | Base de datos transaccional para desarrollo/tests e integración continua. |
+| **Frontend Core** | React 19 + TypeScript 5.9 + Vite 8 | Interfaz de usuario reactiva con tipado estático estricto. |
+| **Estilos y Gráficas** | Tailwind CSS v4 (`@tailwindcss/vite`), Lucide React, Recharts | Sistema de diseño estilo Vercel / `shadcn/ui` con **0 estilos en línea (`style=`)**. |
+| **Calidad y CI/CD** | JUnit 5, Mockito, MockMvc (55 tests) + Vitest, RTL (15 tests) + GitHub Actions & Dependabot | 70 tests automatizados ejecutados en cada Pull Request. |
 
 ---
 
-## 🗄️ 2. Capa de Persistencia y Esquema de Datos (`05-arquitecto-datos`)
+## 🗄️ 2. Modelo de Datos y Migraciones Flyway (`05-arquitecto-datos`)
 
-### 2.1. Gobernanza con Flyway
-Hibernate tiene prohibido generar o alterar tablas automáticamente (`ddl-auto=validate`). Cualquier cambio estructural requiere crear una nueva migración versionada en `airouter/src/main/resources/db/migration/`.
+Los scripts SQL residen en `airouter/src/main/resources/db/migration/`:
 
-* **Migración inicial (`V1__create_request_logs_table.sql`):**
-  * Crea la tabla `request_logs` con clave primaria `UUID`.
-  * Define tres índices B-Tree para optimizar las consultas analíticas y de historial:
-    * `idx_request_logs_user_id` (filtrado por usuario).
-    * `idx_request_logs_created_at` (ordenación cronológica descendente).
-    * `idx_request_logs_model_routed` (agregación por modelo).
+### 2.1. Historial de Migraciones
+1. **`V1__create_request_logs_table.sql`:**
+   * Crea la tabla `request_logs` (`id UUID PK`, `user_id VARCHAR(120)`, `prompt_content CLOB`, `model_routed VARCHAR(80)`, `tokens_estimated INTEGER`, `created_at TIMESTAMP`).
+   * Crea los índices B-Tree `idx_request_logs_user_id`, `idx_request_logs_created_at` y `idx_request_logs_model_routed`.
+2. **`V2__create_user_budgets_table.sql`:**
+   * Crea la tabla `user_budgets` (`id UUID PK`, `user_id VARCHAR(120) UNIQUE`, `max_budget_usd NUMERIC(19, 6)`, `auto_downgrade_enabled BOOLEAN DEFAULT TRUE`, `updated_at TIMESTAMP`).
+   * Crea la restricción de unicidad `uk_user_budgets_user_id` y el índice `idx_user_budgets_user_id`.
+3. **`V3__add_cache_hit_to_request_logs.sql`:**
+   * Añade a `request_logs` la columna `cache_hit BOOLEAN NOT NULL DEFAULT FALSE` y el índice `idx_request_logs_cache_hit`.
 
-### 2.2. Entidad JPA (`RequestLog.java`)
-Ubicada en `com.tuproyecto.airouter.models.entities.RequestLog`:
-* **Regla de Oro de Lombok en JPA:** No utiliza `@Data`, `@ToString` ni `@EqualsAndHashCode` para evitar problemas de rendimiento y recursión con proxies de Hibernate. Emplea `@Getter`, `@Setter`, `@Builder`, `@NoArgsConstructor`, `@AllArgsConstructor` e implementa `equals` y `hashCode` manualmente basándose exclusivamente en el identificador `id`.
-* **Asignación automática de fecha:** El callback `@PrePersist` inicializa `createdAt` con `LocalDateTime.now()` si no fue establecido previamente.
-
----
-
-## ⚙️ 3. Arquitectura del Backend (`01-backend-java`)
-
-El paquete base es `com.tuproyecto.airouter` y se estructura en capas estrictas:
-
-### 3.1. Contratos DTO (`models/dto/`)
-Todos los DTOs están implementados como **`record` inmutables de Java 21**:
-* **`PromptRequest`:** Cuerpo de entrada para `POST /api/v1/router/prompt` con validaciones Jakarta (`@NotBlank` en `userId` y `prompt`, `@Size(max = 120)` en `userId`).
-* **`RouterResponse`:** Respuesta detallada tras evaluar y persistir un prompt (`id`, `userId`, `promptContent`, `modelRouted`, `tokensEstimated`, `simulatedResponse`, `createdAt`).
-* **`RouterStatsResponse`:** Métricas agregadas y financieras (`totalRequests`, `totalTokensEstimated`, `fastModelRequests`, `proModelRequests`, `fastModelTokens`, `proModelTokens`, `estimatedActualCostUsd`, `estimatedBaselineProCostUsd`, `estimatedSavingsUsd`, `savingsPercentage`).
-* **`ErrorResponse`:** Formato estándar de error JSON (`timestamp`, `status`, `error`, `message`, `path`, `validationErrors`).
-
-### 3.2. Motor de Enrutamiento y Cálculo Financiero (`services/RouterService.java`)
-`RouterService` concentra las tres reglas de negocio nucleares:
-
-1. **Estimación de Tokens (`estimateTokens`):**
-   * Divide el prompt limpio por espacios en blanco (`\\s+`), cuenta las palabras y aplica un factor multiplicador de **1.3 tokens por palabra** (`TOKENS_PER_WORD_FACTOR = 1.3`), redondeando al alza (`Math.ceil`).
-2. **Selección Inteligente de Modelo (`selectOptimalModel`):**
-   * Evalúa si los tokens estimados superan el umbral **`SIMPLE_PROMPT_MAX_TOKENS` (`50`)** o si el texto en minúsculas contiene alguna palabra clave de alta complejidad (`COMPLEX_KEYWORDS`: `"arquitectura"`, `"refactorizar"`, `"optimizar"`, `"analizar en profundidad"`).
-   * Si cumple alguna condición ➔ enruta a **`gemini-2.5-pro`**. En caso contrario ➔ enruta a **`gemini-2.5-flash`**.
-3. **Cálculo de Costes y Ahorro con `BigDecimal` (`getStats`):**
-   * Utiliza aritmética `BigDecimal` con `RoundingMode.HALF_UP` y escala de **6 decimales** para evitar errores de coma flotante (`double`):
-     * Tarifa `gemini-2.5-flash`: **`$0.15` USD / 1.000.000 tokens**.
-     * Tarifa `gemini-2.5-pro`: **`$1.25` USD / 1.000.000 tokens**.
-   * Calcula el **Coste Real** (`actualCost`), el **Coste Base Pro** (`baselineProCost` asumiendo que todos los tokens hubieran ido a Pro), el **Ahorro Neto** (`baselineProCost - actualCost`) y el **Porcentaje de Ahorro** (escala de 2 decimales).
-
-### 3.3. Controlador REST y Manejo de Excepciones (`controllers/`)
-* **`GatewayController` (`/api/v1/router`):**
-  * `POST /prompt`: Recibe `@Valid @RequestBody PromptRequest` y delega en `routerService.routePrompt(request)`.
-  * `GET /logs`: Acepta `@RequestParam(required = false) String userId` y devuelve `List<RouterResponse>`.
-  * `GET /stats`: Acepta `@RequestParam(required = false) String userId` y devuelve `RouterStatsResponse`.
-* **`GlobalExceptionHandler` (`@RestControllerAdvice`):**
-  * Intercepta `MethodArgumentNotValidException`, `HttpMessageNotReadableException`, `IllegalArgumentException` y `Exception` genéricas para devolver siempre un `ErrorResponse` uniforme sin filtrar trazas internas (`stack traces`) al cliente.
+### 2.2. Reglas de Diseño en Entidades JPA (`RequestLog.java` y `UserBudget.java`)
+* **Prohibición de `@Data` en JPA:** Conforme a `GEMINI.md`, las entidades utilizan exclusivamente `@Entity`, `@Getter`, `@Setter`, `@Builder`, `@NoArgsConstructor` y `@AllArgsConstructor`.
+* **Igualdad por Identificador:** `equals(Object)` y `hashCode()` se implementan manualmente comprobando únicamente `id != null && Objects.equals(id, other.id)` para evitar fallos con proxies perezosos de Hibernate.
+* **Callbacks de Ciclo de Vida:** `@PrePersist` y `@PreUpdate` garantizan que `createdAt`, `updatedAt`, `cacheHit` (`false`) y `autoDowngradeEnabled` (`true`) nunca lleguen nulos a la base de datos.
 
 ---
 
-## 🛡️ 4. Seguridad, CORS y Rate Limiting (`04-auditor-seguridad`)
+## ⚙️ 3. Lógica de Negocio del Backend (`01-backend-java`)
 
-Ubicado en `com.tuproyecto.airouter.config`:
+### 3.1. Flujo Completo de Enrutamiento (`RouterService.routePrompt`)
+Cuando `GatewayController` recibe `POST /api/v1/router/prompt`, `RouterService` ejecuta secuencialmente estos **6 pasos**:
 
-### 4.1. `RateLimitingFilter` (`OncePerRequestFilter`)
-* Intercepta exclusivamente las peticiones `POST` dirigidas a `/api/v1/router/prompt` (ignorando `GET` y preflight `OPTIONS`).
-* **Identificación de cliente:** Prioriza la cabecera `X-API-Key` si está presente; en su defecto utiliza la dirección IP (`request.getRemoteAddr()`).
-* **Algoritmo de ventana fija (60 segundos):** Mantiene un `ConcurrentHashMap<String, ClientRateWindow>` thread-safe con contador atómico (`AtomicInteger`).
-* **Respuesta de bloqueo (`HTTP 429 Too Many Requests`):** Cuando se supera `airouter.security.rate-limit.requests-per-minute` (por defecto `20`), detiene la cadena de filtros, inyecta la cabecera estándar `Retry-After` (segundos restantes de la ventana) y escribe un JSON `ErrorResponse`.
-* **Enmascaramiento en logs:** Cualquier clave `X-API-Key` se registra ofuscada en los logs del servidor (`apikey:sk-***`) para prevenir fugas de credenciales.
+1. **Saneamiento y Validación (`validateAndExtractPrompt` / `validateAndExtractUserId`):**
+   * Verifica que ni `userId` ni `prompt` sean nulos o en blanco (lanzando `InvalidPromptException` -> HTTP `400` en caso contrario).
+2. **Estimación Heurística de Tokens (`estimateTokens`):**
+   * Cuenta las palabras separadas por `\\s+` y multiplica por el factor **`TOKENS_PER_WORD_FACTOR = 1.3`**, redondeando al alza (`Math.ceil`).
+3. **Selección Inicial de Modelo (`selectOptimalModel`):**
+   * Si `tokensEstimated > 50` (`SIMPLE_PROMPT_MAX_TOKENS`) o el prompt en minúsculas contiene términos de alta complejidad (`"arquitectura"`, `"refactorizar"`, `"optimizar"`, `"analizar en profundidad"`), selecciona **`gemini-2.5-pro`**; en caso contrario, selecciona **`gemini-2.5-flash`**.
+4. **Evaluación del Cortafuegos Presupuestario FinOps (`applyBudgetFirewallAndSelectModel`):**
+   * Consulta `userBudgetRepository.findByUserId(userId)`. Si el usuario tiene un límite activo (`maxBudgetUsd > 0`):
+     * Calcula su gasto acumulado real (`currentSpendUsd`).
+     * **Regla del 100% (Hard Cap):** Si `currentSpendUsd >= maxBudgetUsd`, aborta inmediatamente lanzando **`BudgetExceededException`**, que `GlobalExceptionHandler` convierte en **HTTP `402 Payment Required`**.
+     * **Regla del 80% (Auto-Downgrade):** Si el uso es `>= 80.0%` y `autoDowngradeEnabled == true`, fuerza el modelo a **`gemini-2.5-flash`** aunque el paso 3 hubiera elegido `Pro`.
+5. **Verificación de Caché Semántica de Coste Cero (`findCachedEntry`):**
+   * Normaliza el prompt con `normalizePromptForCache` (`trim()`, colapso de espacios `\\s+` a `" "` y `toLowerCase(Locale.ROOT)`).
+   * Si ya existe en `request_logs` un registro previo con el mismo prompt normalizado:
+     * Marca **`cacheHit = true`**, recupera la respuesta previa en `< 5 ms` y **omite la llamada HTTP a Google Gemini**.
+6. **Ejecución Híbrida de 3 Niveles (`resolveResponseText` + `GeminiRestClient`) y Persistencia:**
+   * Si no hubo *Cache Hit* (`cacheHit = false`), resuelve la clave API activa:
+     * **Nivel 1 (BYOK):** Cabecera `X-API-Key` enviada por el usuario en la petición.
+     * **Nivel 2 (Servidor):** Propiedad `airouter.gemini.api-key` (`GEMINI_API_KEY`).
+     * **Nivel 3 (Fallback a Simulación):** Si no hay clave o si `GeminiRestClient.generateContent(...)` devuelve `Optional.empty()` (por error de red, timeout o clave de prueba), genera una respuesta simulada determinista (`[Simulación AI Cost Router]...`).
+   * Persiste la entidad `RequestLog` y devuelve el `record` inmutable `RouterResponse`.
 
-### 4.2. `SecurityConfig`
-* Registra el `FilterRegistrationBean<RateLimitingFilter>` con prioridad alta (`Ordered.HIGHEST_PRECEDENCE + 10`).
-* Configura el `WebMvcConfigurer` para aplicar **CORS restrictivo** sobre `/api/v1/**`: permite el origen `http://localhost:5173` (parametrizable vía `airouter.security.cors.allowed-origins`), cabeceras `Content-Type`, `Accept`, `Authorization`, `X-API-Key` y expone la cabecera `Retry-After` al navegador.
+---
+
+### 3.2. Cliente HTTP Real (`clients/GeminiRestClient.java`)
+* Construido sobre `org.springframework.web.client.RestClient` con `SimpleClientHttpRequestFactory` (`connectTimeout` y `readTimeout` gobernados por `airouter.gemini.timeout-seconds=15`).
+* Invoca `POST {baseUrl}/v1beta/models/{model}:generateContent` enviando la clave en la cabecera **`x-goog-api-key`** (jamás en la URL para impedir que quede registrada en logs de acceso HTTP).
+* En caso de `RestClientException`, registra el aviso enmascarando el secreto con `maskApiKey` (`AIza****`) y retorna `Optional.empty()`.
+
+---
+
+### 3.3. Cálculo Financiero con `BigDecimal` (`RouterService.getStats`)
+* Todas las operaciones monetarias emplean `BigDecimal` con escala de **6 decimales** (`COST_SCALE = 6`) y redondeo `RoundingMode.HALF_UP`:
+  * Tarifa `gemini-2.5-flash`: **`$0.15` USD / 1M tokens**.
+  * Tarifa `gemini-2.5-pro`: **`$1.25` USD / 1M tokens**.
+* **Tratamiento de la Caché Semántica:**
+  * Los registros con `cacheHit == true` incrementan `totalRequests`, `totalTokensEstimated`, `cacheHits` y el coste de referencia `estimatedBaselineProCostUsd`, pero **no suman tokens facturados** a `estimatedActualCostUsd` (su coste real es `$0.000000 USD`), por lo que el 100% de su valor se refleja como ahorro neto en `estimatedSavingsUsd`.
+
+---
+
+## 🛡️ 4. Seguridad, Rate Limiting y CORS (`04-auditor-seguridad`)
+
+1. **`RateLimitingFilter.java` (`OncePerRequestFilter`):**
+   * Protege `POST /api/v1/router/prompt` mediante ventanas fijas de 60 segundos en memoria (`ConcurrentHashMap<String, ClientRateWindow>`) identificando al cliente por `X-API-Key` (prioritario) o IP (`RemoteAddr`).
+   * Límite por defecto: **20 peticiones/minuto** (`airouter.security.rate-limit.requests-per-minute=20`).
+   * Al superarse, devuelve **HTTP `429 Too Many Requests`**, cabecera `Retry-After` (segundos restantes) y cuerpo JSON `ErrorResponse`, enmascarando la clave en los logs (`apikey:sk-***`).
+2. **`SecurityConfig.java`:**
+   * Registra `RateLimitingFilter` con prioridad `Ordered.HIGHEST_PRECEDENCE + 10`.
+   * Aplica CORS restrictivo autorizando `http://localhost:5173`, métodos `GET, POST, OPTIONS` en `/api/v1/**` y `GET, PUT, DELETE, OPTIONS` en `/api/v1/router/budget/**`, exponiendo la cabecera `Retry-After`.
 
 ---
 
 ## 🎨 5. Arquitectura del Frontend (`02-frontend-ui`)
 
-El proyecto reside en `frontend/` y sigue una estética **Minimalista Premium (inspirada en Vercel / shadcn/ui)** utilizando exclusivamente clases de **Tailwind CSS v4** (prohibido el uso de atributos `style={{...}}` en línea).
+Ubicado en `frontend/src/`, construido con **React 19**, **TypeScript** y **Tailwind CSS v4** bajo la regla estricta de **cero atributos `style=` en línea**:
 
-### 5.1. Estructura de Archivos (`frontend/src/`)
-* **`types/router.ts`:** Interfaces TypeScript (`PromptRequest`, `RouterResponse`, `RouterStatsResponse`, `ErrorResponse`) espejadas exactamente con los `record` de Java.
 * **`utils/currency.ts`:**
-  * Define el tipo `CurrencyCode = 'EUR' | 'USD'` y la tasa constante `USD_TO_EUR_RATE = 0.92`.
-  * `convertFromUsd(amountUsd, currency)` convierte cualquier importe base del backend.
-  * `formatCurrency(amountUsd, currency, fractionDigits = 6)` formatea en formato europeo (`0,506000 €`) o estadounidense (`$0.550000`).
-* **`services/api.ts`:**
-  * Implementa `sendPrompt`, `fetchLogs` y `fetchStats` usando `fetch` nativo.
-  * Define la clase `ApiError` que adjunta `status`, `errorResponse` y `retryAfterSeconds` (leído de la cabecera HTTP `Retry-After`).
-* **`components/`:**
-  * **`Header.tsx`:** Barra superior con `backdrop-blur-md`, buscador por `userId`, conmutador de divisa `EUR €` / `USD $` y botón de sincronización.
-  * **`MetricCard.tsx`:** Subcomponente atómico reutilizable para tarjetas KPI con soporte nativo de **Skeleton Loader** (`animate-pulse`) durante estados de carga.
-  * **`StatsCards.tsx`:** Grid de 4 columnas que compone las tarjetas de Peticiones, Tokens, Coste Acumulado y Ahorro usando `MetricCard`.
-  * **`PromptPlayground.tsx`:** Consola interactiva de simulación de prompts con plantillas rápidas y alertas visuales para códigos HTTP `400` y `429`.
-  * **`ModelDistributionChart.tsx`:** Visualización analítica de distribución de modelos con barras SVG proporcionales (sin CSS en línea), Skeleton Loader y estado vacío.
-  * **`RecentLogsTable.tsx`:** Tabla de historial de peticiones recientes con Skeleton Loader y estado vacío interactivo (`EmptyState`) que incluye un botón CTA para cargar un prompt de prueba.
+  * Tasa oficial interna `USD_TO_EUR_RATE = 0.92`.
+  * `convertFromUsd(amountUsd, currency)`: Convierte los importes del backend para visualización.
+  * `convertToUsd(amountInCurrency, currency)`: Convierte el presupuesto introducido por el usuario en Euros o Dólares a USD antes de enviarlo en `PUT /api/v1/router/budget/{userId}`.
+  * `formatCurrency(amountUsd, currency, 6)`: Formatea con coma decimal y sufijo `€` en Euros (`0,506000 €`) o punto decimal y prefijo `$` en Dólares (`$0.550000`).
+* **Componentes Modulares (`components/`):**
+  * `Header.tsx`: Filtro reactivo por `userId`, selector `EUR € / USD $` y sincronización manual.
+  * `MetricCard.tsx` y `StatsCards.tsx`: Tarjetas KPI reutilizables con *Skeleton Loaders* (`animate-pulse`) y contador de `Caché Hit (0 €)`.
+  * `BudgetControlCard.tsx`: Panel interactivo FinOps con barra de progreso SVG (`viewBox="0 0 100 6"`), presets rápidos y conmutador de degradación al 80%.
+  * `PromptPlayground.tsx`: Simulador con soporte BYOK (`X-API-Key`), badges dinámicos (`Gemini API Real` vs `Modo Simulación`, `Caché Hit (0 €)`) y manejo de errores `400`, `402` y `429`.
+  * `ModelDistributionChart.tsx` y `RecentLogsTable.tsx`: Visualización analítica y tabla de auditoría con *Empty State* interactivo.
 
 ---
 
-## 🧪 6. Estrategia de Pruebas y QA (`03-qa-tester`)
+## 🔄 6. Integración Continua (CI/CD) y Dependabot
 
-El proyecto mantiene una separación estricta entre implementación y validación:
-
-### 6.1. Pruebas de Backend (`airouter/src/test/`) — 38 Tests
-* `RequestLogMigrationAndRepositoryTest`: Verifica la ejecución de Flyway `V1` y las consultas JPA sobre H2.
-* `RouterServiceTest`: Pruebas unitarias con Mockito para la estimación de tokens, heurística de selección `flash`/`pro` y cálculo financiero exacto con `BigDecimal`.
-* `GatewayControllerIntegrationTest`: Pruebas de integración `@SpringBootTest` + `@AutoConfigureMockMvc` validando códigos `200`, `400` y persistencia extremo a extremo.
-* `SecurityAndRateLimitIntegrationTest`: Verifica cabeceras CORS (`Access-Control-Allow-Origin`), bloqueo en la petición nº 21 (`HTTP 429` + `Retry-After`) y aislamiento por `X-API-Key`.
-
-### 6.2. Pruebas de Frontend (`frontend/src/test/`) — 10 Tests
-* `currency.test.ts`: Pruebas unitarias de conversión `USD -> EUR` (`0.92`), valores límite y formateo a 6 decimales.
-* `App.test.tsx`: Pruebas de integración con Vitest y React Testing Library verificando:
-  * Renderizado de **Skeleton Loaders** durante la carga inicial.
-  * Renderizado de **Estados Vacíos (`EmptyState`)** y funcionamiento del botón CTA *"Probar un prompt de ejemplo"*.
-  * Conmutación en vivo entre **`EUR €`** (por defecto) y **`USD $`**.
-  * Envío de prompts en el simulador y actualización reactiva de KPIs.
-  * Manejo de errores HTTP `400` y `429` (`Retry-After`).
-  * Filtrado de estadísticas e historial por `userId`.
-
----
-
-## 🗺️ 7. Extensibilidad Futura (Usuarios, Pagos y Clientes LLM)
-
-La arquitectura actual está preparada para evolucionar hacia un producto SaaS completo en tres ejes:
-1. **Clientes HTTP Reales (`airouter/src/main/java/com/tuproyecto/airouter/clients/`):**
-   * Crear una interfaz `LlmClient` con implementaciones `GeminiRestClient` y `OpenAiRestClient` inyectadas en `RouterService`, activables mediante perfiles de Spring o presencia de `GEMINI_API_KEY`.
-2. **Autenticación y Multi-Tenancy (Usuarios y Proyectos):**
-   * Añadir migración Flyway `V2__create_users_and_api_keys_tables.sql` para gestionar cuentas de usuario, roles (`ROLE_USER`, `ROLE_ADMIN`), autenticación JWT/OAuth2 y claves `X-API-Key` persistidas en base de datos con hash SHA-256.
-3. **Pasarela de Pagos y Presupuestos (Billing):**
-   * Añadir migración `V3__create_billing_and_subscriptions_tables.sql` e integrar webhooks de **Stripe** para permitir suscripciones mensuales, billetera de saldo prepago (*Wallet*) y cortafuegos presupuestario (*Hard Cost Cap*) que bloquee las peticiones cuando un usuario alcance su presupuesto mensual en Euros o Dólares.
-
+* **`.github/workflows/ci.yml`:** Pipeline con permisos restringidos (`contents: read`) que ejecuta en paralelo:
+  * `backend-java-qa`: Java 21 (`temurin`) + `./mvnw clean test -B` (**55 tests**).
+  * `frontend-react-qa`: Node 22 + `npm ci`, `npm run lint`, `npm test -- --run` (**15 tests**) y `npm run build`.
+* **`.github/dependabot.yml`:** Auditoría semanal automática de dependencias para Maven (`/airouter`), npm (`/frontend`) y GitHub Actions (`/`).

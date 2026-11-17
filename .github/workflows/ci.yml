@@ -1,0 +1,90 @@
+# ==============================================================================
+# Pipeline de Integración Continua (CI) — AI Cost Router
+# ==============================================================================
+# Ejecuta automáticamente la validación de calidad, seguridad y compilación
+# en paralelo para el Backend (Spring Boot / Java 21) y el Frontend (React 19)
+# ante cada push a ramas principales/funcionales y Pull Requests hacia main.
+# ==============================================================================
+
+name: CI - AI Cost Router (Backend & Frontend)
+
+on:
+  push:
+    branches:
+      - "main"
+      - "feature/**"
+  pull_request:
+    branches:
+      - "main"
+
+# Principio de Mínimo Privilegio (DevSecOps):
+# El token GITHUB_TOKEN solo dispone de permisos de lectura sobre el código.
+permissions:
+  contents: read
+
+# Control de concurrencia: cancela ejecuciones previas en curso de la misma rama
+# o Pull Request para optimizar recursos y evitar condiciones de carrera.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # Job 1: Verificación del Backend (Java 21, Spring Boot 4.1.1, Flyway y JUnit)
+  # ----------------------------------------------------------------------------
+  backend-java-qa:
+    name: Backend Spring Boot (Java 21 & Flyway)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./airouter
+
+    steps:
+      - name: Descargar código fuente del repositorio (Checkout)
+        uses: actions/checkout@v4
+
+      - name: Configurar entorno JDK 21 (Eclipse Temurin) y caché de Maven
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'maven'
+          cache-dependency-path: 'airouter/pom.xml'
+
+      - name: Otorgar permisos de ejecución al wrapper de Maven y ejecutar tests
+        run: |
+          chmod +x mvnw
+          ./mvnw clean test -B
+
+  # ----------------------------------------------------------------------------
+  # Job 2: Verificación del Frontend (Node 22, React 19, ESLint, Vitest y Build)
+  # ----------------------------------------------------------------------------
+  frontend-react-qa:
+    name: Frontend Dashboard (React 19, ESLint, Vitest & Build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+
+    steps:
+      - name: Descargar código fuente del repositorio (Checkout)
+        uses: actions/checkout@v4
+
+      - name: Configurar entorno Node.js 22 y caché de dependencias npm
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'frontend/package-lock.json'
+
+      - name: Instalar dependencias de forma determinista (npm ci)
+        run: npm ci
+
+      - name: Ejecutar análisis estático de código (ESLint)
+        run: npm run lint
+
+      - name: Ejecutar suite de pruebas unitarias e integración (Vitest)
+        run: npm test -- --run
+
+      - name: Verificar compilación TypeScript y empaquetado de producción (Vite Build)
+        run: npm run build
