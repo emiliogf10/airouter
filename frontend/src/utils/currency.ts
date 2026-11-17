@@ -8,6 +8,18 @@ import type { CurrencyCode } from '../types/router';
 export const USD_TO_EUR_RATE = 0.92;
 
 /**
+ * Tarifa oficial en dólares estadounidenses (USD) por cada 1.000.000 de tokens
+ * procesados en el modelo rápido y económico (`gemini-2.5-flash`).
+ */
+export const FLASH_RATE_PER_MILLION_USD = 0.15;
+
+/**
+ * Tarifa oficial en dólares estadounidenses (USD) por cada 1.000.000 de tokens
+ * procesados en el modelo de razonamiento avanzado (`gemini-2.5-pro`).
+ */
+export const PRO_RATE_PER_MILLION_USD = 1.25;
+
+/**
  * Convierte un importe monetario expresado en dólares estadounidenses (USD)
  * a la divisa seleccionada por el usuario en el panel de control.
  *
@@ -56,4 +68,44 @@ export function formatCurrency(amountUsd: number, currency: CurrencyCode): strin
     return `${converted.toFixed(6).replace('.', ',')} €`;
   }
   return `$${converted.toFixed(6)}`;
+}
+
+/**
+ * Calcula el coste real facturado en dólares estadounidenses (USD) de una petición individual
+ * en función del modelo asignado, los tokens estimados y si fue resuelta por la Caché Semántica.
+ *
+ * - Si `cacheHit === true` o `tokensEstimated <= 0`, devuelve `0`.
+ * - Si el modelo incluye `'pro'`, aplica `$1.25 / 1M` tokens.
+ * - En caso contrario (`gemini-2.5-flash`), aplica `$0.15 / 1M` tokens.
+ *
+ * @param modelRouted     Nombre del modelo LLM asignado a la petición.
+ * @param tokensEstimated Número de tokens estimados del prompt.
+ * @param cacheHit        Indica si la petición fue un acierto de caché a coste cero.
+ * @returns Coste real estimado en USD redondeado a 6 decimales.
+ */
+export function calculateLogCostUsd(
+  modelRouted: string,
+  tokensEstimated: number,
+  cacheHit?: boolean,
+): number {
+  if (cacheHit === true || !Number.isFinite(tokensEstimated) || tokensEstimated <= 0) {
+    return 0;
+  }
+  const isPro = (modelRouted ?? '').toLowerCase().includes('pro');
+  const rate = isPro ? PRO_RATE_PER_MILLION_USD : FLASH_RATE_PER_MILLION_USD;
+  return Number(((tokensEstimated * rate) / 1_000_000).toFixed(6));
+}
+
+/**
+ * Calcula el coste base hipotético en dólares estadounidenses (USD) si la petición
+ * se hubiera procesado íntegramente con el modelo avanzado (`gemini-2.5-pro` a `$1.25 / 1M` tokens).
+ *
+ * @param tokensEstimated Número de tokens estimados del prompt.
+ * @returns Coste base Pro en USD redondeado a 6 decimales.
+ */
+export function calculateBaselineProCostUsd(tokensEstimated: number): number {
+  if (!Number.isFinite(tokensEstimated) || tokensEstimated <= 0) {
+    return 0;
+  }
+  return Number(((tokensEstimated * PRO_RATE_PER_MILLION_USD) / 1_000_000).toFixed(6));
 }

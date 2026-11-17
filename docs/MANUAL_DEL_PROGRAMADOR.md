@@ -60,7 +60,7 @@ flowchart TB
 | **Motor BD** | H2 Database (en memoria `airouterdb`) / PostgreSQL | Base de datos transaccional para desarrollo/tests e integración continua. |
 | **Frontend Core** | React 19 + TypeScript 5.9 + Vite 8 | Interfaz de usuario reactiva con tipado estático estricto. |
 | **Estilos y Gráficas** | Tailwind CSS v4 (`@tailwindcss/vite`), Lucide React, Recharts | Sistema de diseño estilo Vercel / `shadcn/ui` con **0 estilos en línea (`style=`)**. |
-| **Calidad y CI/CD** | JUnit 5, Mockito, MockMvc (55 tests) + Vitest, RTL (15 tests) + GitHub Actions & Dependabot | 70 tests automatizados ejecutados en cada Pull Request. |
+| **Calidad y CI/CD** | JUnit 5, Mockito, MockMvc (55 tests) + Vitest, RTL (21 tests) + GitHub Actions & Dependabot | 76 tests automatizados ejecutados en cada Pull Request. |
 
 ---
 
@@ -146,17 +146,17 @@ Cuando `GatewayController` recibe `POST /api/v1/router/prompt`, `RouterService` 
 
 Ubicado en `frontend/src/`, construido con **React 19**, **TypeScript** y **Tailwind CSS v4** bajo la regla estricta de **cero atributos `style=` en línea**:
 
-* **`utils/currency.ts`:**
+* **`utils/currency.ts` y `utils/csv.ts`:**
   * Tasa oficial interna `USD_TO_EUR_RATE = 0.92`.
-  * `convertFromUsd(amountUsd, currency)`: Convierte los importes del backend para visualización.
-  * `convertToUsd(amountInCurrency, currency)`: Convierte el presupuesto introducido por el usuario en Euros o Dólares a USD antes de enviarlo en `PUT /api/v1/router/budget/{userId}`.
-  * `formatCurrency(amountUsd, currency, 6)`: Formatea con coma decimal y sufijo `€` en Euros (`0,506000 €`) o punto decimal y prefijo `$` en Dólares (`$0.550000`).
+  * `convertFromUsd(amountUsd, currency)` y `convertToUsd(amountInCurrency, currency)`: Conversión bidireccional `EUR <-> USD`.
+  * `calculateLogCostUsd(modelRouted, tokensEstimated, cacheHit)` y `calculateBaselineProCostUsd(tokensEstimated)`: Cálculo individual por petición (`0` si `cacheHit === true`).
+  * `sanitizeCsvCell(value)` y `exportLogsToCsv(logs, currency)` (`utils/csv.ts`): Exportación contable RFC 4180 con BOM UTF-8 (`\uFEFF`) y protección contra **CSV Formula Injection (DDE)** prefijando `'` ante celdas que comienzan por `=`, `+`, `-`, `@`, `\t` o `\r`.
 * **Componentes Modulares (`components/`):**
-  * `Header.tsx`: Filtro reactivo por `userId`, selector `EUR € / USD $` y sincronización manual.
+  * `Header.tsx`: Filtro reactivo por `userId`, selector `EUR € / USD $`, conmutador de tema `Claro / Oscuro` sincronizado con `<meta name="color-scheme">` y sincronización manual.
   * `MetricCard.tsx` y `StatsCards.tsx`: Tarjetas KPI reutilizables con *Skeleton Loaders* (`animate-pulse`) y contador de `Caché Hit (0 €)`.
   * `BudgetControlCard.tsx`: Panel interactivo FinOps con barra de progreso SVG (`viewBox="0 0 100 6"`), presets rápidos y conmutador de degradación al 80%.
   * `PromptPlayground.tsx`: Simulador con soporte BYOK (`X-API-Key`), badges dinámicos (`Gemini API Real` vs `Modo Simulación`, `Caché Hit (0 €)`) y manejo de errores `400`, `402` y `429`.
-  * `ModelDistributionChart.tsx` y `RecentLogsTable.tsx`: Visualización analítica y tabla de auditoría con *Empty State* interactivo.
+  * `ModelDistributionChart.tsx`, `RecentLogsTable.tsx` y `LogInspectorDrawer.tsx`: Visualización analítica, tabla accesible (`role="region"`, `tabIndex={0}`) con botón `Exportar CSV` y visor modal nativo `<dialog>` (`showModal()`, `closedby="any"`, `overscroll-behavior: contain` y botones de copiado con región viva `<span role="status">` externa).
 
 ---
 

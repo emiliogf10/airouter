@@ -1,8 +1,18 @@
 <!doctype html>
-<html lang="es" class="dark">
+<html lang="es" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      try {
+        const storedScheme = localStorage.getItem('color-scheme');
+        if (storedScheme === 'light' || storedScheme === 'dark') {
+          document.querySelector('meta[name="color-scheme"]').content = storedScheme;
+          document.documentElement.setAttribute('data-theme', storedScheme);
+        }
+      } catch {}
+    </script>
     <title>AI Cost Router — Panel de Control Analítico</title>
   </head>
   <body class="bg-zinc-950 text-zinc-100 antialiased selection:bg-indigo-500/30 selection:text-indigo-200">

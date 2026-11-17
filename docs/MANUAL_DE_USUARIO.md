@@ -58,6 +58,8 @@ Ubicada en la parte superior fija de la pantalla:
 * **Conmutador de Divisa (`EUR €` | `USD $`):**
   * **`EUR €` (Seleccionado por defecto):** Muestra todos los costes y presupuestos convertidos a Euros (`1 USD = 0.92 EUR`) con formato europeo de 6 decimales (`0,506000 €`).
   * **`USD $`:** Muestra los importes en Dólares estadounidenses según la tarificación nativa de los proveedores LLM (`$0.550000`).
+* **Conmutador de Tema (`Claro` ☀️ / `Oscuro` 🌙):**
+  * Permite alternar en tiempo real entre la estética oscura estilo Vercel (*Dark Mode*) y el tema claro de alto contraste (*Light Mode*), recordando tu preferencia en el navegador.
 * **Botón `Sincronizar`:** Refresca manualmente todas las métricas, el presupuesto y la tabla desde el servidor.
 
 ---
@@ -114,9 +116,15 @@ Ubicada en la columna derecha central:
 
 ---
 
-### 3.6. Tabla de Registro de Peticiones Recientes (`RecentLogsTable`)
+### 3.6. Tabla de Registro de Peticiones Recientes (`RecentLogsTable`), Exportación CSV y Visor de Detalle (`LogInspectorDrawer`)
 Ubicada en la parte inferior del Dashboard:
-* Muestra en orden cronológico inverso todas las peticiones con su **Fecha/Hora**, **Usuario**, **Extracto del Prompt**, **Modelo Enrutado** (incluyendo el badge **`Caché Hit (0 €)`** cuando aplica) y **Tokens**.
+* Muestra en orden cronológico inverso todas las peticiones con su **Fecha/Hora**, **Usuario**, **Extracto del Prompt**, **Modelo Enrutado** (incluyendo el badge **`Caché Hit (0 €)`** cuando aplica), **Tokens** y un botón de acción **`Ver detalle`**.
+* **Exportación Contable a CSV (`Exportar CSV`):** En la esquina superior derecha de la tabla dispones del botón **`Exportar CSV`**, que descarga al instante un archivo `ai-cost-router-logs.csv` compatible con Microsoft Excel y LibreOffice Calc con los costes y ahorros individuales en la divisa activa (`EUR` o `USD`).
+* **Visor Modal de Detalle (`LogInspectorDrawer`):**
+  * Al hacer clic en cualquier fila de la tabla o en su botón **`Ver detalle`**, se despliega un panel lateral modal que muestra:
+    1. **Metadatos y Finanzas Individuales:** Identificador único (`UUID`), usuario, fecha exacta, modelo asignado, tokens estimados, **Coste Individual Facturado** y **Ahorro Individual Generado** en esa única llamada.
+    2. **Prompt Íntegro y Respuesta Completa:** Texto completo sin recortar tanto de la consulta enviada como de la respuesta generada por Gemini o el simulador, cada uno con su botón **`Copiar prompt`** / **`Copiar respuesta`** al portapapeles.
+  * Puedes cerrar el visor pulsando el botón **`Cerrar`**, haciendo clic fuera del panel o pulsando la tecla `Esc`.
 * Si aún no hay datos, muestra un **Estado Vacío** con el botón **`Probar un prompt de ejemplo`** que rellena automáticamente el simulador.
 
 ---
