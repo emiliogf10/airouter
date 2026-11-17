@@ -49,7 +49,8 @@
 │   └── vite.config.ts
 ├── docs/                       # Documentación oficial del proyecto
 │   ├── MANUAL_DE_USUARIO.md    # Guía funcional paso a paso del Dashboard y simulador
-│   └── MANUAL_DEL_PROGRAMADOR.md # Arquitectura técnica, modelo de datos, seguridad y costes
+│   ├── MANUAL_DEL_PROGRAMADOR.md # Arquitectura técnica, modelo de datos, seguridad y costes
+│   └── GUIA_DE_PRUEBAS_MANUALES.md # Checklist interactiva para probar las 8 funciones clave
 ├── GEMINI.md                   # Contexto global, reglas arquitectónicas y ADRs
 └── PLAN_DE_ACCION.md           # Backlog priorizado e historial de cambios
 ```
