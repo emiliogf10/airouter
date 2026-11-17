@@ -41,7 +41,7 @@ jobs:
 
     steps:
       - name: Descargar código fuente del repositorio (Checkout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configurar entorno JDK 21 (Eclipse Temurin) y caché de Maven
         uses: actions/setup-java@v4
@@ -68,7 +68,7 @@ jobs:
 
     steps:
       - name: Descargar código fuente del repositorio (Checkout)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configurar entorno Node.js 22 y caché de dependencias npm
         uses: actions/setup-node@v4
