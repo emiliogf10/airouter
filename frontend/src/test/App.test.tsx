@@ -726,4 +726,122 @@ describe('AI Cost Router Dashboard - Pruebas de Integración', () => {
       expect(screen.getByTestId('routed-cache-hit-badge')).toHaveTextContent('Caché Hit (0 €)');
     });
   });
+
+  /**
+   * Verifica el visor modal `LogInspectorDrawer` (`modern-web-guidance` — `dialog` y `copy-button`):
+   * - Al pulsar `data-testid="inspect-log-btn-..."` en una fila de `RecentLogsTable`, se abre
+   *   `data-testid="log-inspector-drawer"` mostrando el prompt íntegro (`inspector-full-prompt`),
+   *   la respuesta íntegra (`inspector-full-response`), el coste individual (`inspector-actual-cost`)
+   *   y el ahorro individual (`inspector-saved-cost`).
+   * - Al pulsar `data-testid="inspector-copy-prompt-btn"`, se copia el prompt al portapapeles y la
+   *   región viva externa `<span role="status" data-testid="inspector-copy-prompt-status">` anuncia `"Copiado"`.
+   * - Al pulsar `data-testid="inspector-close-button"`, se cierra el visor modal.
+   */
+  it('abre el visor modal LogInspectorDrawer al inspeccionar un registro, copia el prompt anunciando "Copiado" y permite cerrarlo', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/stats')) {
+        return new Response(JSON.stringify(MOCK_GLOBAL_STATS), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify(MOCK_INITIAL_LOGS), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: writeTextMock },
+      configurable: true,
+    });
+
+    render(<App />);
+
+    const inspectButton = await screen.findByTestId(
+      'inspect-log-btn-a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+    );
+    expect(screen.getByTestId('export-csv-button')).toBeEnabled();
+
+    await userEvent.click(inspectButton);
+
+    const dialog = screen.getByTestId('log-inspector-drawer');
+    expect(dialog).toHaveAttribute('open');
+    expect(screen.getByTestId('inspector-full-prompt')).toHaveTextContent(
+      'Hola, ¿qué día es hoy?',
+    );
+    expect(screen.getByTestId('inspector-full-response')).toHaveTextContent(
+      '[Simulación AI Cost Router] Petición procesada exitosamente.',
+    );
+    expect(screen.getByTestId('inspector-actual-cost')).toHaveTextContent('0,000001 €');
+    expect(screen.getByTestId('inspector-saved-cost')).toHaveTextContent('0,000006 €');
+
+    // Copiar prompt y verificar anuncio en <span role="status">
+    await userEvent.click(screen.getByTestId('inspector-copy-prompt-btn'));
+
+    await waitFor(() => {
+      expect(writeTextMock).toHaveBeenCalledWith('Hola, ¿qué día es hoy?');
+      expect(screen.getByTestId('inspector-copy-prompt-status')).toHaveTextContent('Copiado');
+    });
+
+    // Cerrar el visor modal
+    await userEvent.click(screen.getByTestId('inspector-close-button'));
+
+    await waitFor(() => {
+      expect(dialog).not.toHaveAttribute('open');
+    });
+  });
+
+  /**
+   * Verifica el conmutador de Tema Claro/Oscuro (`data-testid="theme-toggle-button"`):
+   * comprueba que al hacer clic alterna el atributo `data-theme` en `document.documentElement`
+   * y la etiqueta `<meta name="color-scheme">` entre `'dark'` y `'light'`.
+   */
+  it('conmuta entre Tema Oscuro (dark) y Tema Claro (light) al pulsar theme-toggle-button', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/stats')) {
+        return new Response(JSON.stringify(MOCK_GLOBAL_STATS), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify(MOCK_INITIAL_LOGS), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<App />);
+
+    const themeButton = await screen.findByTestId('theme-toggle-button');
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+    expect(document.querySelector('meta[name="color-scheme"]')?.getAttribute('content')).toBe(
+      'dark',
+    );
+
+    await userEvent.click(themeButton);
+
+    await waitFor(() => {
+      expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+      expect(document.querySelector('meta[name="color-scheme"]')?.getAttribute('content')).toBe(
+        'light',
+      );
+    });
+
+    await userEvent.click(themeButton);
+
+    await waitFor(() => {
+      expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+      expect(document.querySelector('meta[name="color-scheme"]')?.getAttribute('content')).toBe(
+        'dark',
+      );
+    });
+  });
 });

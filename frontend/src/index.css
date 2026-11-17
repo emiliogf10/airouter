@@ -1,1 +1,89 @@
 @import "tailwindcss";
+
+/**
+ * Reglas globales de esquema de color (`dark-mode` y `dark-mode-toggle`)
+ * y contención de desplazamiento para modales nativos `<dialog>` (`dialog.md`).
+ */
+:root {
+  color-scheme: light dark;
+
+  &:has(> head > meta[name="color-scheme"][content="dark"]) {
+    color-scheme: dark;
+  }
+
+  &:has(> head > meta[name="color-scheme"][content="light"]) {
+    color-scheme: light;
+  }
+}
+
+dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background: rgba(9, 9, 11, 0.75);
+  backdrop-filter: blur(4px);
+}
+
+/**
+ * Adaptación cromática progresiva cuando el usuario activa explícitamente el Modo Claro
+ * (`meta[name="color-scheme"][content="light"]` o `html[data-theme="light"]`),
+ * invirtiendo las superficies oscuras neutras (`zinc-950` / `zinc-900`) hacia una paleta
+ * clara limpia y de alto contraste sin utilizar ningún atributo `style` en línea.
+ */
+:root:has(> head > meta[name="color-scheme"][content="light"]),
+:root[data-theme="light"] {
+  & body,
+  & .bg-zinc-950 {
+    background-color: #f8fafc;
+    color: #0f172a;
+  }
+
+  & .bg-zinc-950\/85,
+  & .bg-zinc-950\/90 {
+    background-color: rgba(255, 255, 255, 0.9);
+  }
+
+  & .bg-zinc-900,
+  & .bg-zinc-900\/60,
+  & .bg-zinc-900\/80,
+  & .bg-zinc-900\/90 {
+    background-color: #ffffff;
+    color: #0f172a;
+  }
+
+  & .bg-zinc-950\/50,
+  & .bg-zinc-950\/60,
+  & .bg-zinc-950\/70,
+  & .bg-zinc-950\/80 {
+    background-color: #f1f5f9;
+    color: #0f172a;
+  }
+
+  & .bg-zinc-800,
+  & .bg-zinc-800\/80,
+  & .bg-zinc-800\/90 {
+    background-color: #e2e8f0;
+    color: #1e293b;
+  }
+
+  & .text-zinc-50,
+  & .text-zinc-100,
+  & .text-zinc-200 {
+    color: #0f172a;
+  }
+
+  & .text-zinc-300,
+  & .text-zinc-400,
+  & .text-gray-500 {
+    color: #475569;
+  }
+
+  & .border-white\/10,
+  & .border-white\/15,
+  & .border-white\/5 {
+    border-color: #e2e8f0;
+  }
+}

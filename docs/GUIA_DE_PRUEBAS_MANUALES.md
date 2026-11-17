@@ -111,3 +111,18 @@ Abre tu navegador en: 👉 **`http://localhost:5173`**
 - [ ] **8.3. Prueba de aislamiento por API Key:**
   * Sin esperar a que pasen los segundos, escribe cualquier texto nuevo en el campo **`Cabecera X-API-Key`** (ej. `usuario-vip-2`) y pulsa **`Ejecutar enrutamiento`**.
   * Comprueba que te deja pasar inmediatamente porque cada `X-API-Key` tiene su propia cuota aislada de 20 peticiones/minuto.
+
+---
+
+### 9. Visor Modal de Detalle (`LogInspectorDrawer`), Exportación CSV y Tema Claro/Oscuro
+- [ ] **9.1. Inspeccionar una petición en detalle:**
+  * Baja a la tabla **"Registro de Peticiones Recientes"** y haz clic sobre cualquier fila o sobre su botón **`Ver detalle`**.
+  * Comprueba que se abre el panel lateral modal mostrando el `UUID`, el **Coste Facturado individual**, el **Ahorro Generado individual**, el **Prompt íntegro** y la **Respuesta completa**.
+  * Pulsa **`Copiar prompt`** y **`Copiar respuesta`**: verifica que el icono cambia a un check verde y aparece la confirmación **`Copiado`**.
+  * Pulsa `Esc` o haz clic fuera del panel para cerrarlo.
+- [ ] **9.2. Exportar historial a CSV:**
+  * En la cabecera de la tabla inferior, pulsa el botón **`Exportar CSV`**.
+  * Comprueba que el navegador descarga el archivo `ai-cost-router-logs.csv` con todas las filas y costes en la moneda activa (`EUR` o `USD`).
+- [ ] **9.3. Conmutador de Tema Claro / Oscuro (`Claro` ☀️ / `Oscuro` 🌙):**
+  * En la barra superior derecha (junto al selector `EUR € / USD $`), pulsa el botón **`Claro`** (icono de Sol).
+  * Comprueba que toda la interfaz cambia suavemente al tema claro de alto contraste, y al volver a pulsarlo (**`Oscuro`**) regresa a la estética oscura tipo Vercel.

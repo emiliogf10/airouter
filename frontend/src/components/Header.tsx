@@ -1,5 +1,5 @@
-import React from 'react';
-import { Cpu, RefreshCw, Search, ShieldCheck, X } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Cpu, Moon, RefreshCw, Search, ShieldCheck, Sun, X } from 'lucide-react';
 import type { CurrencyCode } from '../types/router';
 import { USD_TO_EUR_RATE } from '../utils/currency';
 
@@ -24,10 +24,44 @@ export interface HeaderProps {
 }
 
 /**
+ * Esquemas de color soportados por el conmutador visual del Dashboard.
+ */
+export type ThemeScheme = 'dark' | 'light';
+
+/**
+ * Sincroniza la etiqueta `<meta name="color-scheme">`, el atributo `data-theme` en `<html>`
+ * y el almacenamiento local (`localStorage`) siguiendo las guías `dark-mode` y `dark-mode-toggle`
+ * de `modern-web-guidance`.
+ *
+ * @param scheme Esquema de color a aplicar (`'dark'` o `'light'`).
+ */
+function applyDocumentColorScheme(scheme: ThemeScheme): void {
+  if (typeof document === 'undefined') {
+    return;
+  }
+
+  let metaTag = document.querySelector<HTMLMetaElement>('meta[name="color-scheme"]');
+  if (!metaTag) {
+    metaTag = document.createElement('meta');
+    metaTag.name = 'color-scheme';
+    document.head.appendChild(metaTag);
+  }
+  metaTag.content = scheme;
+  document.documentElement.setAttribute('data-theme', scheme);
+
+  try {
+    localStorage.setItem('color-scheme', scheme);
+  } catch {
+    // Si localStorage está restringido, el tema se aplica igualmente en el DOM
+  }
+}
+
+/**
  * Barra de navegación superior del panel de control analítico **AI Cost Router**
  * rediseñada con estética minimalista inspirada en Vercel / shadcn/ui.
  * Incluye estado de red del Gateway, buscador reactivo por `userId`, conmutador de divisa
- * (`EUR €` activo por defecto / `USD $`) y botón de sincronización.
+ * (`EUR €` activo por defecto / `USD $`), conmutador de Tema Claro/Oscuro (`dark-mode-toggle`)
+ * y botón de sincronización.
  *
  * @param props Propiedades de configuración e interacción de la cabecera.
  * @returns Elemento JSX con la barra superior del Dashboard.
@@ -41,6 +75,29 @@ export const Header: React.FC<HeaderProps> = ({
   isRefreshing,
   isGatewayOnline,
 }) => {
+  const [theme, setTheme] = useState<ThemeScheme>(() => {
+    try {
+      const saved = localStorage.getItem('color-scheme');
+      if (saved === 'light' || saved === 'dark') {
+        return saved;
+      }
+    } catch {
+      // Ignorar errores de acceso a localStorage
+    }
+    return 'dark';
+  });
+
+  useEffect(() => {
+    applyDocumentColorScheme(theme);
+  }, [theme]);
+
+  /**
+   * Alterna entre el esquema oscuro (`'dark'`) y claro (`'light'`).
+   */
+  const handleToggleTheme = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
   return (
     <header className="border-b border-white/10 bg-zinc-950/85 backdrop-blur-md sticky top-0 z-30">
       <div className="max-w-7xl mx-auto px-6 py-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -78,7 +135,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Controles: Filtro por usuario, Selector de divisa EUR/USD y Refresco */}
+        {/* Controles: Filtro por usuario, Selector de divisa EUR/USD, Tema y Refresco */}
         <div className="flex flex-wrap items-center gap-3">
           {/* Filtro por userId */}
           <div className="relative flex-1 sm:flex-initial sm:w-64">
@@ -143,6 +200,28 @@ export const Header: React.FC<HeaderProps> = ({
               USD $
             </button>
           </div>
+
+          {/* Conmutador de Tema Claro / Oscuro (dark-mode-toggle) */}
+          <button
+            type="button"
+            data-testid="theme-toggle-button"
+            onClick={handleToggleTheme}
+            aria-label={theme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+            title={theme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-100 border border-white/10 transition cursor-pointer shadow-sm"
+          >
+            {theme === 'dark' ? (
+              <>
+                <Sun className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
+                <span>Modo Claro</span>
+              </>
+            ) : (
+              <>
+                <Moon className="w-3.5 h-3.5 text-indigo-400" aria-hidden="true" />
+                <span>Modo Oscuro</span>
+              </>
+            )}
+          </button>
 
           {/* Botón Actualizar datos */}
           <button

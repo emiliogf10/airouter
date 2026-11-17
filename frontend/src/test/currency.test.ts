@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { convertFromUsd, convertToUsd, formatCurrency, USD_TO_EUR_RATE } from '../utils/currency';
+import {
+  calculateBaselineProCostUsd,
+  calculateLogCostUsd,
+  convertFromUsd,
+  convertToUsd,
+  formatCurrency,
+  USD_TO_EUR_RATE,
+} from '../utils/currency';
 
 /**
  * Suite de pruebas unitarias para las utilidades de conversión y formateo monetario (`currency.ts`).
@@ -71,5 +78,25 @@ describe('Utilidades de Moneda (currency.ts)', () => {
     expect(convertToUsd(0.00092, 'EUR')).toBe(0.001);
     expect(convertToUsd(1.25, 'USD')).toBe(1.25);
     expect(convertToUsd(Number.NaN, 'EUR')).toBe(0);
+  });
+
+  /**
+   * Verifica `calculateLogCostUsd` y `calculateBaselineProCostUsd` para peticiones individuales:
+   * - `gemini-2.5-flash` a `$0.15 / 1M` tokens.
+   * - `gemini-2.5-pro` a `$1.25 / 1M` tokens.
+   * - Coste `0` cuando `cacheHit === true` o `tokensEstimated <= 0`.
+   */
+  it('calcula el coste individual en USD según el modelo asignado, coste 0 en Caché Hit y el coste base Pro', () => {
+    // 100.000 tokens en Flash = $0.015000 USD
+    expect(calculateLogCostUsd('gemini-2.5-flash', 100_000, false)).toBe(0.015);
+    // 100.000 tokens en Pro = $0.125000 USD
+    expect(calculateLogCostUsd('gemini-2.5-pro', 100_000, false)).toBe(0.125);
+    // Caché Hit siempre devuelve 0 USD independientemente del modelo o tokens
+    expect(calculateLogCostUsd('gemini-2.5-pro', 100_000, true)).toBe(0);
+    expect(calculateLogCostUsd('gemini-2.5-flash', 0, false)).toBe(0);
+
+    // Coste base Pro hipotético para 100.000 tokens = $0.125000 USD
+    expect(calculateBaselineProCostUsd(100_000)).toBe(0.125);
+    expect(calculateBaselineProCostUsd(0)).toBe(0);
   });
 });

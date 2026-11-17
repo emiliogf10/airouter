@@ -1,6 +1,17 @@
 import React from 'react';
-import { ArrowUpRight, Clock, Database, Inbox, Sparkles, User, Zap } from 'lucide-react';
-import type { RouterResponse } from '../types/router';
+import {
+  ArrowUpRight,
+  Clock,
+  Database,
+  Download,
+  Eye,
+  Inbox,
+  Sparkles,
+  User,
+  Zap,
+} from 'lucide-react';
+import type { CurrencyCode, RouterResponse } from '../types/router';
+import { exportLogsToCsv } from '../utils/csv';
 
 /**
  * Propiedades del componente de tabla de historial reciente (`RecentLogsTable`).
@@ -12,6 +23,10 @@ export interface RecentLogsTableProps {
   isLoading: boolean;
   /** Callback opcional para disparar una prueba rápida en el simulador desde el estado vacío. */
   onQuickTry?: () => void;
+  /** Callback opcional invocado cuando el usuario selecciona un registro para inspeccionarlo en el visor modal. */
+  onSelectLog?: (log: RouterResponse) => void;
+  /** Divisa activa (`'EUR'` o `'USD'`) utilizada para calcular los importes al exportar a CSV. */
+  currency?: CurrencyCode;
 }
 
 /**
@@ -36,20 +51,23 @@ function formatDateTime(isoDate: string): string {
 }
 
 /**
- * Tabla minimalista de registros recientes (`RecentLogsTable`) inspirada en Vercel / shadcn/ui.
+ * Tabla minimalista de registros recientes (`RecentLogsTable`) inspirada en Vercel / shadcn/ui
+ * y alineada con la guía `responsive-table` de `modern-web-guidance`.
  * Incluye:
- * - **Skeleton Loaders** animados (`animate-pulse`) durante la carga inicial.
- * - **Estado Vacío (`EmptyState`)** limpio con icono de `lucide-react` y botón de llamada a la acción
- *   cuando aún no existen peticiones registradas.
- * - Filas con transiciones suaves, badges sutiles (`emerald` para Flash e `indigo` para Pro) y tipografía clara.
+ * - Contenedor desplazable accesible con `role="region"`, `tabIndex={0}` y `aria-labelledby="recent-logs-heading"`.
+ * - Botón **`Exportar CSV`** (`data-testid="export-csv-button"`) con sanitización contra CSV Formula Injection.
+ * - Apertura del visor modal (`LogInspectorDrawer`) al hacer clic en cualquier fila o en el botón **`Ver detalle`**.
+ * - **Skeleton Loaders** animados (`animate-pulse`) durante la carga inicial y **Estado Vacío (`EmptyState`)** con CTA.
  *
- * @param props Lista de logs, indicador de carga y acción rápida opcional.
+ * @param props Lista de logs, indicador de carga, selector de inspección y divisa activa.
  * @returns Sección de tabla responsiva con el historial de peticiones.
  */
 export const RecentLogsTable: React.FC<RecentLogsTableProps> = ({
   logs,
   isLoading,
   onQuickTry,
+  onSelectLog,
+  currency = 'EUR',
 }) => {
   return (
     <section
@@ -59,19 +77,36 @@ export const RecentLogsTable: React.FC<RecentLogsTableProps> = ({
       {/* Cabecera de la sección */}
       <div className="p-6 border-b border-white/10 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight text-zinc-100">
+          <h2
+            id="recent-logs-heading"
+            className="text-xl font-semibold tracking-tight text-zinc-100"
+          >
             Historial de Peticiones Recientes
           </h2>
           <p className="text-sm text-zinc-400 mt-1">
-            Registro de auditoría en tiempo real de prompts evaluados, tokens estimados y modelo asignado.
+            Registro de auditoría en tiempo real de prompts evaluados, tokens estimados y modelo asignado. Haz clic en una fila para inspeccionar su desglose.
           </p>
         </div>
-        <span
-          data-testid="logs-count-badge"
-          className="px-3 py-1 rounded-full text-xs font-medium bg-zinc-800/80 text-zinc-300 border border-white/10"
-        >
-          {logs.length} {logs.length === 1 ? 'registro' : 'registros'}
-        </span>
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          <span
+            data-testid="logs-count-badge"
+            className="px-3 py-1 rounded-full text-xs font-medium bg-zinc-800/80 text-zinc-300 border border-white/10"
+          >
+            {logs.length} {logs.length === 1 ? 'registro' : 'registros'}
+          </span>
+
+          <button
+            type="button"
+            data-testid="export-csv-button"
+            disabled={logs.length === 0}
+            onClick={() => exportLogsToCsv(logs, currency)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-100 border border-white/10 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
+            <span>Exportar CSV</span>
+          </button>
+        </div>
       </div>
 
       {/* Estado de carga: Skeleton Loader */}
@@ -126,16 +161,22 @@ export const RecentLogsTable: React.FC<RecentLogsTableProps> = ({
           )}
         </div>
       ) : (
-        /* Tabla de datos */
-        <div className="overflow-x-auto">
+        /* Tabla de datos accesible según responsive-table.md */
+        <div
+          role="region"
+          tabIndex={0}
+          aria-labelledby="recent-logs-heading"
+          className="overflow-x-auto focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+        >
           <table className="w-full text-left border-collapse" data-testid="request-logs-table">
-            <thead>
-              <tr className="border-b border-white/10 bg-zinc-950/40 text-xs font-medium text-zinc-400">
-                <th className="py-3.5 px-6">Usuario</th>
-                <th className="py-3.5 px-6">Fragmento del Prompt</th>
-                <th className="py-3.5 px-6">Modelo Asignado</th>
-                <th className="py-3.5 px-6 text-right">Tokens Estimados</th>
-                <th className="py-3.5 px-6 text-right">Fecha y Hora</th>
+            <thead className="sticky top-0 z-10 border-b border-white/10 bg-zinc-950/90 text-xs font-medium text-zinc-400">
+              <tr>
+                <th scope="col" className="py-3.5 px-6">Usuario</th>
+                <th scope="col" className="py-3.5 px-6">Fragmento del Prompt</th>
+                <th scope="col" className="py-3.5 px-6">Modelo Asignado</th>
+                <th scope="col" className="py-3.5 px-6 text-right">Tokens Estimados</th>
+                <th scope="col" className="py-3.5 px-6 text-right">Fecha y Hora</th>
+                <th scope="col" className="py-3.5 px-6 text-right">Inspección</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5 text-sm">
@@ -145,7 +186,8 @@ export const RecentLogsTable: React.FC<RecentLogsTableProps> = ({
                   <tr
                     key={log.id}
                     data-testid={`log-row-${log.id}`}
-                    className="hover:bg-zinc-800/30 transition-colors"
+                    onClick={() => onSelectLog?.(log)}
+                    className="hover:bg-zinc-800/30 transition-colors cursor-pointer"
                   >
                     <td className="py-4 px-6 whitespace-nowrap font-medium text-zinc-200">
                       <span className="inline-flex items-center gap-2">
@@ -193,6 +235,20 @@ export const RecentLogsTable: React.FC<RecentLogsTableProps> = ({
                         <Clock className="w-3.5 h-3.5 text-zinc-500" aria-hidden="true" />
                         {formatDateTime(log.createdAt)}
                       </span>
+                    </td>
+                    <td className="py-4 px-6 whitespace-nowrap text-right">
+                      <button
+                        type="button"
+                        data-testid={`inspect-log-btn-${log.id}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onSelectLog?.(log);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-200 border border-white/10 transition cursor-pointer"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-indigo-400" aria-hidden="true" />
+                        <span>Ver detalle</span>
+                      </button>
                     </td>
                   </tr>
                 );

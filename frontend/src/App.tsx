@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { BudgetControlCard } from './components/BudgetControlCard';
 import { Header } from './components/Header';
+import { LogInspectorDrawer } from './components/LogInspectorDrawer';
 import { ModelDistributionChart } from './components/ModelDistributionChart';
 import { PromptPlayground } from './components/PromptPlayground';
 import { RecentLogsTable } from './components/RecentLogsTable';
@@ -37,11 +38,13 @@ const INITIAL_STATS: RouterStatsResponse = {
 
 /**
  * Componente raíz del Dashboard Analítico **AI Cost Router** rediseñado bajo las
- * directrices estéticas minimalistas de Vercel / shadcn/ui.
+ * directrices estéticas minimalistas de Vercel / shadcn/ui y los estándares de
+ * `modern-web-guidance`.
  * Coordina la gestión de estado global para:
  * - El selector interactivo de moneda (`EUR €` seleccionado por defecto o `USD $`).
  * - El filtrado reactivo de telemetría e historial por usuario (`userId`).
  * - El panel de control de Cortafuegos Presupuestario FinOps (`BudgetControlCard`).
+ * - El visor modal de auditoría detallada (`LogInspectorDrawer`) y exportación CSV segura.
  * - La sincronización automática de estadísticas (`GET /api/v1/router/stats`) y registros (`GET /api/v1/router/logs`).
  *
  * @returns Interfaz completa del panel de control de AI Cost Router.
@@ -61,6 +64,8 @@ export const App: React.FC = () => {
   const [stats, setStats] = useState<RouterStatsResponse>(INITIAL_STATS);
   /** Historial reciente de peticiones evaluadas por el Gateway. */
   const [logs, setLogs] = useState<RouterResponse[]>([]);
+  /** Registro actualmente seleccionado para inspección en el visor modal `<dialog>`. */
+  const [selectedLog, setSelectedLog] = useState<RouterResponse | null>(null);
   /** Indica si se están cargando o refrescando los datos desde el backend. */
   const [isLoading, setIsLoading] = useState<boolean>(true);
   /** Indica si el backend respondió correctamente en la última sincronización. */
@@ -204,13 +209,22 @@ export const App: React.FC = () => {
           <ModelDistributionChart stats={stats} isLoading={isLoading} />
         </div>
 
-        {/* Sección inferior: Historial de peticiones recientes */}
+        {/* Sección inferior: Historial de peticiones recientes + Exportación CSV */}
         <RecentLogsTable
           logs={logs}
           isLoading={isLoading}
           onQuickTry={handleQuickTryFromEmptyState}
+          onSelectLog={setSelectedLog}
+          currency={currency}
         />
       </main>
+
+      {/* Visor Modal Nativo (<dialog>) de Detalle de Petición */}
+      <LogInspectorDrawer
+        log={selectedLog}
+        currency={currency}
+        onClose={() => setSelectedLog(null)}
+      />
 
       <footer className="border-t border-white/10 py-6 text-center text-xs text-gray-500">
         AI Cost Router — Plataforma de Enrutamiento Inteligente y Optimización de Costes LLM
