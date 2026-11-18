@@ -243,6 +243,12 @@ public class RouterService {
     private final ConcurrentHashMap<String, CachedPromptEntry> promptCache = new ConcurrentHashMap<>();
 
     /**
+     * Mapa concurrente de monitores por usuario para serializar de forma atómica las recargas
+     * y deducciones de saldo de la Billetera Prepago ({@code [LOW-01]}).
+     */
+    private final ConcurrentHashMap<String, Object> walletLocks = new ConcurrentHashMap<>();
+
+    /**
      * Constructor de compatibilidad para pruebas unitarias que solo requieren el repositorio JPA de logs
      * y operan exclusivamente en modo simulación sin cortafuegos presupuestario.
      *
@@ -396,9 +402,10 @@ public class RouterService {
     @Transactional
     public RouterResponse routePrompt(PromptRequest request, String clientApiKey) {
         validateRequest(request);
-        validateManagedClientApiKeyIfPresent(clientApiKey);
 
         String normalizedUserId = request.userId().trim();
+        validateManagedClientApiKeyIfPresent(clientApiKey, normalizedUserId);
+
         String promptContent = request.prompt();
 
         int tokensEstimated = estimateTokens(promptContent);
@@ -406,8 +413,16 @@ public class RouterService {
         String firewallModel = applyBudgetFirewallAndSelectModel(normalizedUserId, initialModel);
         boolean downgradedByBudget = !firewallModel.equals(initialModel);
 
+        boolean hasExternalByokKey = clientApiKey != null
+                && !clientApiKey.isBlank()
+                && !clientApiKey.trim().startsWith(MANAGED_API_KEY_PREFIX);
+
         String normalizedPrompt = normalizePromptForCache(promptContent);
-        Optional<CachedPromptEntry> cachedEntryOpt = findCachedEntry(normalizedPrompt);
+        Optional<CachedPromptEntry> cachedEntryOpt = findCachedEntry(
+                normalizedPrompt,
+                normalizedUserId,
+                hasExternalByokKey
+        );
 
         boolean isCacheHit;
         String selectedModel;
@@ -433,7 +448,18 @@ public class RouterService {
                     normalizedUserId, tokensEstimated, selectedModel);
 
             finalResponseText = resolveModelResponse(selectedModel, promptContent, tokensEstimated, clientApiKey);
-            promptCache.put(normalizedPrompt, new CachedPromptEntry(selectedModel, tokensEstimated, finalResponseText));
+            boolean isSimulatedResponse = finalResponseText == null
+                    || finalResponseText.startsWith("[Simulación AI Cost Router]");
+            promptCache.put(
+                    normalizedPrompt,
+                    new CachedPromptEntry(
+                            selectedModel,
+                            tokensEstimated,
+                            finalResponseText,
+                            normalizedUserId,
+                            isSimulatedResponse
+                    )
+            );
         }
 
         RequestLog entityToSave = RequestLog.builder()
@@ -468,18 +494,38 @@ public class RouterService {
 
     /**
      * Busca si existe una petición previa equivalente en el historial de base de datos o en la caché
-     * de la sesión de prueba actual.
+     * de la sesión actual, aplicando aislamiento de seguridad entre respuestas simuladas y respuestas
+     * privadas obtenidas mediante claves BYOK reales ({@code [MEDIUM-02]}).
      *
-     * <p>Verifica en primer lugar {@link RequestLogRepository#findAllByOrderByCreatedAtDesc()} para
-     * garantizar que la limpieza de base de datos entre tests de integración invalide automáticamente
-     * la caché en memoria.</p>
+     * <ul>
+     *   <li>Si la petición actual aporta una clave BYOK externa ({@code hasExternalByokKey == true}) y la
+     *       entrada en caché proviene de una simulación o de otro usuario, no devuelve acierto de caché
+     *       para permitir que el cliente BYOK invoque a Google Gemini.</li>
+     *   <li>Si la entrada en memoria contiene una respuesta real generada con la clave privada de un
+     *       usuario distinto ({@code !currentUserId.equals(memoryEntry.ownerUserId())}), no reutiliza
+     *       el texto privado de ese otro usuario.</li>
+     * </ul>
      *
-     * @param normalizedPrompt prompt ya normalizado mediante {@link #normalizePromptForCache(String)}
-     * @return {@link Optional} con los datos de la entrada en caché si existe coincidencia
+     * @param normalizedPrompt   prompt ya normalizado mediante {@link #normalizePromptForCache(String)}
+     * @param currentUserId      identificador normalizado del usuario que realiza la consulta actual
+     * @param hasExternalByokKey {@code true} si la petición actual incluye una clave externa BYOK
+     * @return {@link Optional} con los datos de la entrada en caché si existe coincidencia autorizada
      */
-    private Optional<CachedPromptEntry> findCachedEntry(String normalizedPrompt) {
+    private Optional<CachedPromptEntry> findCachedEntry(
+            String normalizedPrompt,
+            String currentUserId,
+            boolean hasExternalByokKey) {
         if (normalizedPrompt == null || normalizedPrompt.isBlank()) {
             return Optional.empty();
+        }
+
+        CachedPromptEntry memoryEntry = promptCache.get(normalizedPrompt);
+        if (hasExternalByokKey) {
+            if (memoryEntry == null
+                    || memoryEntry.simulatedResponse()
+                    || !currentUserId.equals(memoryEntry.ownerUserId())) {
+                return Optional.empty();
+            }
         }
 
         List<RequestLog> existingLogs = requestLogRepository.findAllByOrderByCreatedAtDesc();
@@ -490,23 +536,72 @@ public class RouterService {
                         && normalizedPrompt.equals(normalizePromptForCache(logEntry.getPromptContent()))) {
                     String modelRouted = logEntry.getModelRouted() != null ? logEntry.getModelRouted() : MODEL_FAST;
                     Integer tokens = logEntry.getTokensEstimated() != null ? logEntry.getTokensEstimated() : 1;
-                    CachedPromptEntry memoryEntry = promptCache.get(normalizedPrompt);
-                    String responseText = (memoryEntry != null && memoryEntry.responseText() != null)
-                            ? memoryEntry.responseText()
-                            : buildSimulatedResponse(modelRouted, tokens);
-                    return Optional.of(new CachedPromptEntry(modelRouted, tokens, responseText));
+
+                    if (memoryEntry != null) {
+                        if (memoryEntry.simulatedResponse() && hasExternalByokKey) {
+                            return Optional.empty();
+                        }
+                        if (!memoryEntry.simulatedResponse()
+                                && memoryEntry.ownerUserId() != null
+                                && !memoryEntry.ownerUserId().equals(currentUserId)) {
+                            String safeSimulatedText = buildSimulatedResponse(modelRouted, tokens);
+                            return Optional.of(new CachedPromptEntry(
+                                    modelRouted,
+                                    tokens,
+                                    safeSimulatedText,
+                                    currentUserId,
+                                    true
+                            ));
+                        }
+                        String responseText = (memoryEntry.responseText() != null)
+                                ? memoryEntry.responseText()
+                                : buildSimulatedResponse(modelRouted, tokens);
+                        return Optional.of(new CachedPromptEntry(
+                                modelRouted,
+                                tokens,
+                                responseText,
+                                memoryEntry.ownerUserId(),
+                                memoryEntry.simulatedResponse()
+                        ));
+                    }
+
+                    if (hasExternalByokKey) {
+                        return Optional.empty();
+                    }
+
+                    return Optional.of(new CachedPromptEntry(
+                            modelRouted,
+                            tokens,
+                            buildSimulatedResponse(modelRouted, tokens),
+                            logEntry.getUserId(),
+                            true
+                    ));
                 }
             }
             return Optional.empty();
         }
 
-        // Si el repositorio es un mock de prueba unitaria donde no se configuró findAllByOrderByCreatedAtDesc(),
-        // permite resolver aciertos dentro de la misma instancia de RouterService.
         if (requestLogRepository.getClass().getName().contains("Mockito")) {
-            return Optional.ofNullable(promptCache.get(normalizedPrompt));
+            if (memoryEntry == null) {
+                return Optional.empty();
+            }
+            if (memoryEntry.simulatedResponse() && hasExternalByokKey) {
+                return Optional.empty();
+            }
+            if (!memoryEntry.simulatedResponse()
+                    && memoryEntry.ownerUserId() != null
+                    && !memoryEntry.ownerUserId().equals(currentUserId)) {
+                return Optional.of(new CachedPromptEntry(
+                        memoryEntry.modelRouted(),
+                        memoryEntry.tokensEstimated(),
+                        buildSimulatedResponse(memoryEntry.modelRouted(), memoryEntry.tokensEstimated()),
+                        currentUserId,
+                        true
+                ));
+            }
+            return Optional.of(memoryEntry);
         }
 
-        // En entorno real/H2, si la tabla request_logs está vacía (p. ej. tras deleteAll()), sincroniza la caché en memoria.
         promptCache.clear();
         return Optional.empty();
     }
@@ -556,7 +651,25 @@ public class RouterService {
      */
     @Transactional
     public UserBudgetResponse updateUserBudget(String userId, UserBudgetRequest request) {
+        return updateUserBudget(userId, request, null);
+    }
+
+    /**
+     * Crea, actualiza o elimina el límite presupuestario (Hard Budget Cap) de un usuario,
+     * verificando previamente la titularidad si se presenta una clave gestionada {@code air_live_...}
+     * ({@code [MEDIUM-01]}).
+     *
+     * @param userId       identificador del usuario cuyo presupuesto se desea configurar
+     * @param request      DTO con el presupuesto máximo en USD y el indicador de auto-downgrade
+     * @param clientApiKey clave opcional enviada por el llamante en la cabecera {@code X-API-Key}
+     * @return DTO {@link UserBudgetResponse} con el estado actualizado del presupuesto
+     * @throws InvalidPromptException si el identificador de usuario es inválido
+     * @throws InvalidApiKeyException si la clave {@code air_live_...} es inválida o pertenece a otro usuario
+     */
+    @Transactional
+    public UserBudgetResponse updateUserBudget(String userId, UserBudgetRequest request, String clientApiKey) {
         String cleanedUserId = validateAndTrimBudgetUserId(userId);
+        validateManagedClientApiKeyIfPresent(clientApiKey, cleanedUserId);
         BigDecimal currentSpendUsd = getStats(cleanedUserId).estimatedActualCostUsd();
 
         if (request == null
@@ -773,10 +886,27 @@ public class RouterService {
      */
     @Transactional
     public ApiKeyCreatedResponse createApiKey(CreateApiKeyRequest request) {
+        return createApiKey(request, null);
+    }
+
+    /**
+     * Genera una nueva clave API gestionada por el Gateway ({@code air_live_<32_hex>}), verificando
+     * que si el llamante presenta una clave {@code air_live_...} en la cabecera, esta sea válida
+     * y pertenezca al mismo usuario ({@code [MEDIUM-01]}).
+     *
+     * @param request      DTO con el identificador de usuario y el nombre descriptivo de la clave
+     * @param clientApiKey clave opcional enviada por el llamante en la cabecera {@code X-API-Key}
+     * @return DTO {@link ApiKeyCreatedResponse} incluyendo {@code rawApiKey} por única vez
+     * @throws InvalidPromptException si la petición, el usuario o el nombre de la clave son inválidos
+     * @throws InvalidApiKeyException si la clave {@code air_live_...} presentada pertenece a otro usuario
+     */
+    @Transactional
+    public ApiKeyCreatedResponse createApiKey(CreateApiKeyRequest request, String clientApiKey) {
         if (request == null) {
             throw new InvalidPromptException("La solicitud de creación de clave API no puede ser nula.");
         }
         String cleanedUserId = validateAndTrimBudgetUserId(request.userId());
+        validateManagedClientApiKeyIfPresent(clientApiKey, cleanedUserId);
         if (request.keyName() == null || request.keyName().isBlank()) {
             throw new InvalidPromptException("El nombre descriptivo de la clave (keyName) es obligatorio y no puede estar en blanco.");
         }
@@ -859,18 +989,38 @@ public class RouterService {
      */
     @Transactional
     public void revokeApiKey(UUID keyId) {
+        revokeApiKey(keyId, null);
+    }
+
+    /**
+     * Revoca (desactiva) una clave API identificada por su UUID verificando, en caso de que el
+     * llamante presente una clave {@code air_live_...}, que dicha clave sea activa y pertenezca
+     * al mismo usuario titular de la clave que se pretende revocar ({@code [MEDIUM-01]}).
+     *
+     * @param keyId        identificador único universal (UUID) de la clave API a revocar
+     * @param clientApiKey clave opcional enviada por el llamante en la cabecera {@code X-API-Key}
+     * @throws InvalidPromptException si {@code keyId} es nulo
+     * @throws InvalidApiKeyException si la clave presentada por el llamante es inválida o no pertenece al propietario
+     */
+    @Transactional
+    public void revokeApiKey(UUID keyId, String clientApiKey) {
         if (keyId == null) {
             throw new InvalidPromptException("El identificador de la clave API (keyId) es obligatorio.");
         }
         if (apiKeyRepository == null) {
             return;
         }
-        apiKeyRepository.findById(keyId).ifPresent(apiKey -> {
+        Optional<ApiKey> targetKeyOpt = apiKeyRepository.findById(keyId);
+        if (targetKeyOpt.isPresent()) {
+            ApiKey apiKey = targetKeyOpt.get();
+            validateManagedClientApiKeyIfPresent(clientApiKey, apiKey.getUserId());
             apiKey.setActive(Boolean.FALSE);
             apiKeyRepository.save(apiKey);
             log.info("Clave API revocada exitosamente [id='{}', prefijo='{}', usuario='{}'].",
                     apiKey.getId(), apiKey.getKeyPrefix(), apiKey.getUserId());
-        });
+        } else {
+            validateManagedClientApiKeyIfPresent(clientApiKey, null);
+        }
     }
 
     /**
@@ -910,7 +1060,25 @@ public class RouterService {
      */
     @Transactional
     public UserWalletResponse topUpUserWallet(String userId, WalletTopUpRequest request) {
+        return topUpUserWallet(userId, request, null);
+    }
+
+    /**
+     * Abona de forma sincronizada y atómica ({@code [LOW-01]}) una recarga de créditos prepago en la
+     * billetera de un usuario, verificando la titularidad si se presenta una clave {@code air_live_...}
+     * ({@code [MEDIUM-01]}).
+     *
+     * @param userId       identificador del usuario titular de la billetera
+     * @param request      DTO con el importe en USD a recargar ({@code > 0}) y el método de pago
+     * @param clientApiKey clave opcional enviada por el llamante en la cabecera {@code X-API-Key}
+     * @return DTO {@link UserWalletResponse} con el nuevo saldo actualizado y estado {@link #WALLET_STATUS_ACTIVE}
+     * @throws InvalidPromptException si el usuario es inválido o el importe de recarga es nulo o {@code <= 0}
+     * @throws InvalidApiKeyException si la clave {@code air_live_...} presentada pertenece a otro usuario
+     */
+    @Transactional
+    public UserWalletResponse topUpUserWallet(String userId, WalletTopUpRequest request, String clientApiKey) {
         String cleanedUserId = validateAndTrimBudgetUserId(userId);
+        validateManagedClientApiKeyIfPresent(clientApiKey, cleanedUserId);
         if (request == null || request.amountUsd() == null || request.amountUsd().compareTo(BigDecimal.ZERO) <= 0) {
             throw new InvalidPromptException("El importe de recarga debe ser mayor que cero.");
         }
@@ -939,38 +1107,42 @@ public class RouterService {
             return toUserWalletResponse(transientWallet);
         }
 
-        UserWallet walletEntity = userWalletRepository.findByUserId(cleanedUserId)
-                .orElseGet(() -> UserWallet.builder()
-                        .userId(cleanedUserId)
-                        .balanceUsd(BigDecimal.ZERO.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP))
-                        .totalToppedUpUsd(BigDecimal.ZERO.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP))
-                        .walletEnforced(Boolean.TRUE)
-                        .build());
+        Object userLock = walletLocks.computeIfAbsent(cleanedUserId, k -> new Object());
+        synchronized (userLock) {
+            UserWallet walletEntity = userWalletRepository.findByUserId(cleanedUserId)
+                    .orElseGet(() -> UserWallet.builder()
+                            .userId(cleanedUserId)
+                            .balanceUsd(BigDecimal.ZERO.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP))
+                            .totalToppedUpUsd(BigDecimal.ZERO.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP))
+                            .walletEnforced(Boolean.TRUE)
+                            .build());
 
-        BigDecimal currentBalance = walletEntity.getBalanceUsd() != null
-                ? walletEntity.getBalanceUsd()
-                : BigDecimal.ZERO;
-        BigDecimal currentTotalToppedUp = walletEntity.getTotalToppedUpUsd() != null
-                ? walletEntity.getTotalToppedUpUsd()
-                : BigDecimal.ZERO;
+            BigDecimal currentBalance = walletEntity.getBalanceUsd() != null
+                    ? walletEntity.getBalanceUsd()
+                    : BigDecimal.ZERO;
+            BigDecimal currentTotalToppedUp = walletEntity.getTotalToppedUpUsd() != null
+                    ? walletEntity.getTotalToppedUpUsd()
+                    : BigDecimal.ZERO;
 
-        walletEntity.setBalanceUsd(currentBalance.add(topUpAmount).setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP));
-        walletEntity.setTotalToppedUpUsd(currentTotalToppedUp.add(topUpAmount).setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP));
-        walletEntity.setWalletEnforced(Boolean.TRUE);
-        walletEntity.setLastPaymentMethod(normalizedPaymentMethod);
-        walletEntity.setUpdatedAt(now);
+            walletEntity.setBalanceUsd(currentBalance.add(topUpAmount).setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP));
+            walletEntity.setTotalToppedUpUsd(currentTotalToppedUp.add(topUpAmount).setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP));
+            walletEntity.setWalletEnforced(Boolean.TRUE);
+            walletEntity.setLastPaymentMethod(normalizedPaymentMethod);
+            walletEntity.setUpdatedAt(now);
 
-        UserWallet savedWallet = userWalletRepository.save(walletEntity);
-        log.info("Recarga prepago completada [usuario='{}', abono=${} USD, pasarela='{}', nuevo saldo=${} USD].",
-                cleanedUserId, topUpAmount.toPlainString(), normalizedPaymentMethod, savedWallet.getBalanceUsd().toPlainString());
+            UserWallet savedWallet = userWalletRepository.save(walletEntity);
+            log.info("Recarga prepago completada [usuario='{}', abono=${} USD, pasarela='{}', nuevo saldo=${} USD].",
+                    cleanedUserId, topUpAmount.toPlainString(), normalizedPaymentMethod, savedWallet.getBalanceUsd().toPlainString());
 
-        return toUserWalletResponse(savedWallet);
+            return toUserWalletResponse(savedWallet);
+        }
     }
 
     /**
-     * Evalúa si el usuario tiene activada la Billetera Prepago ({@code walletEnforced == true}) y,
-     * en caso de tratarse de una petición con coste ({@code !isCacheHit}), verifica que disponga de
-     * saldo positivo y descuenta automáticamente los micro-céntimos correspondientes a la inferencia.
+     * Evalúa de forma sincronizada por usuario ({@code [LOW-01]}) si el titular tiene activada la
+     * Billetera Prepago ({@code walletEnforced == true}) y, en caso de tratarse de una petición con coste
+     * ({@code !isCacheHit}), verifica que disponga de saldo positivo y descuenta atómicamente los micro-céntimos
+     * correspondientes a la inferencia.
      *
      * @param userId          identificador normalizado del usuario
      * @param selectedModel   modelo LLM elegido para procesar la petición
@@ -987,47 +1159,50 @@ public class RouterService {
             return;
         }
 
-        Optional<UserWallet> walletOpt = userWalletRepository.findByUserId(userId);
-        if (walletOpt.isEmpty() || !Boolean.TRUE.equals(walletOpt.get().getWalletEnforced())) {
-            return;
+        Object userLock = walletLocks.computeIfAbsent(userId, k -> new Object());
+        synchronized (userLock) {
+            Optional<UserWallet> walletOpt = userWalletRepository.findByUserId(userId);
+            if (walletOpt.isEmpty() || !Boolean.TRUE.equals(walletOpt.get().getWalletEnforced())) {
+                return;
+            }
+
+            UserWallet wallet = walletOpt.get();
+            BigDecimal currentBalance = wallet.getBalanceUsd() != null
+                    ? wallet.getBalanceUsd().setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+
+            if (currentBalance.compareTo(BigDecimal.ZERO) <= 0) {
+                log.warn("Billetera Prepago [SALDO AGOTADO - HTTP 402]: Usuario '{}' sin créditos disponibles (${} USD).",
+                        userId, currentBalance.toPlainString());
+                throw new BudgetExceededException(
+                        String.format(
+                                "Saldo prepago agotado: la billetera del usuario '%s' tiene $%s USD disponibles. Recargue créditos para continuar.",
+                                userId,
+                                currentBalance.toPlainString()
+                        ),
+                        userId,
+                        wallet.getTotalToppedUpUsd(),
+                        currentBalance
+                );
+            }
+
+            BigDecimal ratePerMillion = MODEL_PRO.equals(selectedModel)
+                    ? COST_PER_MILLION_TOKENS_PRO
+                    : COST_PER_MILLION_TOKENS_FAST;
+            BigDecimal requestCostUsd = BigDecimal.valueOf(tokensEstimated)
+                    .multiply(ratePerMillion)
+                    .divide(ONE_MILLION_TOKENS, INTERNAL_CALCULATION_SCALE, RoundingMode.HALF_UP)
+                    .setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+
+            BigDecimal zeroScaled = BigDecimal.ZERO.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+            BigDecimal updatedBalance = currentBalance.subtract(requestCostUsd)
+                    .max(zeroScaled)
+                    .setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+
+            wallet.setBalanceUsd(updatedBalance);
+            wallet.setUpdatedAt(LocalDateTime.now());
+            userWalletRepository.save(wallet);
         }
-
-        UserWallet wallet = walletOpt.get();
-        BigDecimal currentBalance = wallet.getBalanceUsd() != null
-                ? wallet.getBalanceUsd().setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP)
-                : BigDecimal.ZERO.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
-
-        if (currentBalance.compareTo(BigDecimal.ZERO) <= 0) {
-            log.warn("Billetera Prepago [SALDO AGOTADO - HTTP 402]: Usuario '{}' sin créditos disponibles (${} USD).",
-                    userId, currentBalance.toPlainString());
-            throw new BudgetExceededException(
-                    String.format(
-                            "Saldo prepago agotado: la billetera del usuario '%s' tiene $%s USD disponibles. Recargue créditos para continuar.",
-                            userId,
-                            currentBalance.toPlainString()
-                    ),
-                    userId,
-                    wallet.getTotalToppedUpUsd(),
-                    currentBalance
-            );
-        }
-
-        BigDecimal ratePerMillion = MODEL_PRO.equals(selectedModel)
-                ? COST_PER_MILLION_TOKENS_PRO
-                : COST_PER_MILLION_TOKENS_FAST;
-        BigDecimal requestCostUsd = BigDecimal.valueOf(tokensEstimated)
-                .multiply(ratePerMillion)
-                .divide(ONE_MILLION_TOKENS, INTERNAL_CALCULATION_SCALE, RoundingMode.HALF_UP)
-                .setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
-
-        BigDecimal zeroScaled = BigDecimal.ZERO.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
-        BigDecimal updatedBalance = currentBalance.subtract(requestCostUsd)
-                .max(zeroScaled)
-                .setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
-
-        wallet.setBalanceUsd(updatedBalance);
-        wallet.setUpdatedAt(LocalDateTime.now());
-        userWalletRepository.save(wallet);
     }
 
     /**
@@ -1087,13 +1262,15 @@ public class RouterService {
     }
 
     /**
-     * Verifica la validez criptográfica y el estado activo de una clave API cuando el cliente
-     * envía un token gestionado por el Gateway (con prefijo {@link #MANAGED_API_KEY_PREFIX}).
+     * Verifica la validez criptográfica, el estado activo y la correspondencia de titularidad
+     * ({@code [HIGH-01]}) de una clave API cuando el cliente envía un token gestionado por el
+     * Gateway (con prefijo {@link #MANAGED_API_KEY_PREFIX}).
      *
-     * @param clientApiKey clave opcional enviada en la cabecera {@code X-API-Key}
-     * @throws InvalidApiKeyException si la clave {@code air_live_...} no existe o ha sido revocada
+     * @param clientApiKey   clave opcional enviada en la cabecera {@code X-API-Key}
+     * @param expectedUserId identificador de usuario que debe coincidir con el propietario de la clave (o {@code null} si no aplica)
+     * @throws InvalidApiKeyException si la clave {@code air_live_...} no existe, ha sido revocada o pertenece a otro usuario
      */
-    private void validateManagedClientApiKeyIfPresent(String clientApiKey) {
+    private void validateManagedClientApiKeyIfPresent(String clientApiKey, String expectedUserId) {
         if (clientApiKey == null || clientApiKey.isBlank()) {
             return;
         }
@@ -1102,15 +1279,26 @@ public class RouterService {
             return;
         }
 
+        String safePrefix = trimmedKey.length() >= MANAGED_KEY_VISIBLE_PREFIX_LENGTH
+                ? trimmedKey.substring(0, MANAGED_KEY_VISIBLE_PREFIX_LENGTH) + "..."
+                : MANAGED_API_KEY_PREFIX + "...";
+
         String keyHash = hashApiKeySha256(trimmedKey);
         Optional<ApiKey> storedKeyOpt = apiKeyRepository.findByKeyHash(keyHash);
         if (storedKeyOpt.isEmpty() || !Boolean.TRUE.equals(storedKeyOpt.get().getActive())) {
-            String safePrefix = trimmedKey.length() >= MANAGED_KEY_VISIBLE_PREFIX_LENGTH
-                    ? trimmedKey.substring(0, MANAGED_KEY_VISIBLE_PREFIX_LENGTH) + "..."
-                    : MANAGED_API_KEY_PREFIX + "...";
             log.warn("Autenticación rechazada [HTTP 401]: Clave API del Gateway '{}' inexistente o revocada.", safePrefix);
             throw new InvalidApiKeyException(
                     "La clave API proporcionada ('" + safePrefix + "') es inválida o ha sido revocada.");
+        }
+
+        ApiKey storedKey = storedKeyOpt.get();
+        if (expectedUserId != null
+                && !expectedUserId.isBlank()
+                && !expectedUserId.trim().equals(storedKey.getUserId())) {
+            log.warn("Autenticación rechazada [HTTP 401 - HIGH-01]: La clave API '{}' pertenece a otro titular y no al usuario '{}'.",
+                    safePrefix, expectedUserId.trim());
+            throw new InvalidApiKeyException(
+                    "La clave API proporcionada ('" + safePrefix + "') no pertenece al usuario '" + expectedUserId.trim() + "'.");
         }
     }
 
@@ -1423,16 +1611,20 @@ public class RouterService {
 
     /**
      * Registro inmutable interno que almacena los datos de una respuesta previamente procesada
-     * en la Caché Semántica de Prompts.
+     * en la Caché Semántica de Prompts, incluyendo el titular y si proviene de simulación ({@code [MEDIUM-02]}).
      *
-     * @param modelRouted     modelo LLM que resolvió originalmente la petición
-     * @param tokensEstimated cantidad de tokens estimados del prompt
-     * @param responseText    respuesta textual generada (real o simulada)
+     * @param modelRouted       modelo LLM que resolvió originalmente la petición
+     * @param tokensEstimated   cantidad de tokens estimados del prompt
+     * @param responseText      respuesta textual generada (real o simulada)
+     * @param ownerUserId       identificador del usuario que originó la entrada en caché
+     * @param simulatedResponse {@code true} si la respuesta fue generada por el motor de simulación; {@code false} si provino de Gemini real
      */
     private record CachedPromptEntry(
             String modelRouted,
             Integer tokensEstimated,
-            String responseText
+            String responseText,
+            String ownerUserId,
+            boolean simulatedResponse
     ) {
     }
 }

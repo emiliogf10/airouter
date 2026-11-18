@@ -794,7 +794,7 @@ class RouterServiceTest {
 
         ArgumentCaptor<RequestLog> logCaptor = ArgumentCaptor.forClass(RequestLog.class);
         RouterResponse secondResponse = cacheAwareService.routePrompt(
-                new PromptRequest("user-cache-2", "¿qué día es hoy?")
+                new PromptRequest("user-cache-1", "¿qué día es hoy?")
         );
 
         assertTrue(secondResponse.cacheHit(), "La segunda petición equivalente debe marcarse como cacheHit = true");
@@ -1071,5 +1071,151 @@ class RouterServiceTest {
 
         assertTrue(ex.getMessage().contains("Saldo prepago agotado"));
         verify(requestLogRepository, never()).save(any(RequestLog.class));
+    }
+
+    /**
+     * Prueba de regresión para el hallazgo de auditoría {@code HIGH-01}
+     * ({@code airouter.auth.apikey-userid-unbound}):
+     * verifica que si una clave API gestionada ({@code air_live_...}) pertenece a {@code "alice"},
+     * intentar utilizarla en {@link RouterService#routePrompt(PromptRequest, String)} indicando
+     * {@code userId = "bob"} lanza {@link InvalidApiKeyException} y no persiste ningún log para {@code "bob"}.
+     */
+    @Test
+    @DisplayName("Regresión HIGH-01: routePrompt debe lanzar InvalidApiKeyException cuando la clave air_live_ pertenece a otro userId")
+    void shouldRejectManagedApiKeyWhenOwnerUserIdDoesNotMatchPromptRequestUserId() {
+        ApiKeyRepository mockApiKeyRepo = mock(ApiKeyRepository.class);
+        routerService.setApiKeyRepository(mockApiKeyRepo);
+
+        String aliceRawKey = "air_live_aaaa1111bbbb2222cccc3333dddd4444";
+        String aliceHash = routerService.hashApiKeySha256(aliceRawKey);
+
+        ApiKey aliceKeyEntity = ApiKey.builder()
+                .id(UUID.randomUUID())
+                .userId("alice")
+                .keyName("Clave Privada de Alice")
+                .keyPrefix("air_live_aaaa...")
+                .keyHash(aliceHash)
+                .active(true)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        when(mockApiKeyRepo.findByKeyHash(aliceHash)).thenReturn(Optional.of(aliceKeyEntity));
+
+        InvalidApiKeyException ex = assertThrows(
+                InvalidApiKeyException.class,
+                () -> routerService.routePrompt(
+                        new PromptRequest("bob", "Intentando suplantar a Bob con la clave de Alice"),
+                        aliceRawKey
+                )
+        );
+
+        assertTrue(ex.getMessage().contains("no pertenece al usuario 'bob'"));
+        verify(requestLogRepository, never()).save(any(RequestLog.class));
+    }
+
+    /**
+     * Prueba de regresión para el hallazgo de auditoría {@code MEDIUM-01}
+     * ({@code airouter.authz.unauthenticated-tenant-management-endpoints}):
+     * verifica que {@link RouterService#revokeApiKey(UUID, String)} rechaza con {@link InvalidApiKeyException}
+     * el intento de revocar la clave de {@code "bob"} presentando una clave {@code air_live_...} perteneciente
+     * a {@code "alice"}, manteniendo activa la clave de {@code "bob"}.
+     */
+    @Test
+    @DisplayName("Regresión MEDIUM-01: revokeApiKey debe lanzar InvalidApiKeyException si la clave air_live_ del llamante pertenece a otro usuario")
+    void shouldRejectRevokeApiKeyWhenCallerManagedApiKeyBelongsToAnotherUser() {
+        ApiKeyRepository mockApiKeyRepo = mock(ApiKeyRepository.class);
+        routerService.setApiKeyRepository(mockApiKeyRepo);
+
+        String aliceRawKey = "air_live_aaaa1111bbbb2222cccc3333dddd4444";
+        String aliceHash = routerService.hashApiKeySha256(aliceRawKey);
+
+        ApiKey aliceKeyEntity = ApiKey.builder()
+                .id(UUID.randomUUID())
+                .userId("alice")
+                .keyName("Clave de Alice")
+                .keyPrefix("air_live_aaaa...")
+                .keyHash(aliceHash)
+                .active(true)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        UUID bobKeyId = UUID.randomUUID();
+        ApiKey bobKeyEntity = ApiKey.builder()
+                .id(bobKeyId)
+                .userId("bob")
+                .keyName("Clave de Bob")
+                .keyPrefix("air_live_bbbb...")
+                .keyHash("b".repeat(64))
+                .active(true)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        when(mockApiKeyRepo.findById(bobKeyId)).thenReturn(Optional.of(bobKeyEntity));
+        when(mockApiKeyRepo.findByKeyHash(aliceHash)).thenReturn(Optional.of(aliceKeyEntity));
+
+        assertThrows(
+                InvalidApiKeyException.class,
+                () -> routerService.revokeApiKey(bobKeyId, aliceRawKey)
+        );
+
+        assertTrue(bobKeyEntity.getActive(), "La clave de Bob debe permanecer activa tras el intento no autorizado");
+        verify(mockApiKeyRepo, never()).save(any(ApiKey.class));
+    }
+
+    /**
+     * Prueba de regresión para el hallazgo de auditoría {@code MEDIUM-02}
+     * ({@code airouter.cache.global-cross-user-prompt-cache}):
+     * verifica que si un primer usuario ejecuta un prompt en modo simulación (cacheando
+     * {@code [Simulación AI Cost Router]...}), y posteriormente entra una petición con el mismo prompt
+     * pero adjuntando una clave externa BYOK real ({@code "AIzaSyBobKey123"}), {@link RouterService}
+     * no devuelve la simulación cacheada sino que invoca a {@link GeminiRestClient} y devuelve la respuesta real
+     * ({@code cacheHit == false}).
+     */
+    @Test
+    @DisplayName("Regresión MEDIUM-02: routePrompt no debe servir una respuesta simulada en caché cuando el usuario proporciona una clave BYOK real")
+    void shouldBypassSimulatedCacheEntryWhenCallerProvidesExternalByokGeminiKey() {
+        GeminiRestClient mockGeminiClient = mock(GeminiRestClient.class);
+        RouterService isolatedCacheService = new RouterService(
+                requestLogRepository,
+                mockGeminiClient,
+                ""
+        );
+
+        when(requestLogRepository.save(any(RequestLog.class))).thenAnswer(invocation -> {
+            RequestLog arg = invocation.getArgument(0);
+            arg.setId(UUID.randomUUID());
+            arg.setCreatedAt(LocalDateTime.now());
+            return arg;
+        });
+
+        // 1. Alice envía un prompt sin clave -> Modo Simulación
+        when(requestLogRepository.findAllByOrderByCreatedAtDesc()).thenReturn(Collections.emptyList());
+        RouterResponse simulatedResponse = isolatedCacheService.routePrompt(
+                new PromptRequest("alice", "Explica la arquitectura hexagonal"),
+                null
+        );
+        assertFalse(simulatedResponse.cacheHit());
+        assertTrue(simulatedResponse.simulatedResponse().startsWith("[Simulación AI Cost Router]"));
+        verifyNoInteractions(mockGeminiClient);
+
+        // 2. Bob envía el mismo prompt pero con su clave BYOK real de Gemini -> Debe ignorar la simulación en caché e invocar GeminiRestClient
+        when(mockGeminiClient.generateContent(
+                RouterService.MODEL_PRO,
+                "Explica la arquitectura hexagonal",
+                "AIzaSyBobKey123"))
+                .thenReturn(Optional.of("Respuesta real de Google Gemini sobre arquitectura hexagonal."));
+
+        RouterResponse realByokResponse = isolatedCacheService.routePrompt(
+                new PromptRequest("bob", "Explica la arquitectura hexagonal"),
+                "AIzaSyBobKey123"
+        );
+
+        assertFalse(realByokResponse.cacheHit(), "No debe hacer Cache Hit contra una entrada simulada cuando se provee BYOK real");
+        assertEquals("Respuesta real de Google Gemini sobre arquitectura hexagonal.", realByokResponse.simulatedResponse());
+        verify(mockGeminiClient, times(1)).generateContent(
+                RouterService.MODEL_PRO,
+                "Explica la arquitectura hexagonal",
+                "AIzaSyBobKey123"
+        );
     }
 }

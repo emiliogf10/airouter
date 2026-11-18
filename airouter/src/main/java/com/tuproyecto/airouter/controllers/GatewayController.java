@@ -125,21 +125,38 @@ public class GatewayController {
     }
 
     /**
-     * Crea, actualiza o desactiva el límite presupuestario máximo (en USD) de un usuario.
-     *
-     * <p>Si el cuerpo es nulo o {@code maxBudgetUsd <= 0}, se elimina el límite dejando al usuario
-     * en estado {@code UNLIMITED}.</p>
+     * Crea, actualiza o desactiva el límite presupuestario máximo (en USD) de un usuario sin cabecera explícita.
      *
      * @param userId  identificador del usuario cuyo presupuesto se desea configurar
      * @param request DTO con el presupuesto máximo en USD y la preferencia de auto-downgrade al 80%
+     * @return DTO {@link UserBudgetResponse} con el estado presupuestario actualizado
+     */
+    public UserBudgetResponse updateUserBudget(String userId, UserBudgetRequest request) {
+        return updateUserBudget(userId, request, null);
+    }
+
+    /**
+     * Crea, actualiza o desactiva el límite presupuestario máximo (en USD) de un usuario.
+     *
+     * <p>Si el cuerpo es nulo o {@code maxBudgetUsd <= 0}, se elimina el límite dejando al usuario
+     * en estado {@code UNLIMITED}. Si se incluye la cabecera {@code X-API-Key} con un token del Gateway,
+     * verifica que pertenezca al usuario indicado ({@code [MEDIUM-01]}).</p>
+     *
+     * @param userId  identificador del usuario cuyo presupuesto se desea configurar
+     * @param request DTO con el presupuesto máximo en USD y la preferencia de auto-downgrade al 80%
+     * @param apiKey  clave API opcional del llamante enviada en {@code X-API-Key}
      * @return DTO {@link UserBudgetResponse} con el estado presupuestario actualizado
      */
     @PutMapping("/budget/{userId}")
     @ResponseStatus(HttpStatus.OK)
     public UserBudgetResponse updateUserBudget(
             @PathVariable String userId,
-            @RequestBody(required = false) UserBudgetRequest request) {
-        return routerService.updateUserBudget(userId, request);
+            @RequestBody(required = false) UserBudgetRequest request,
+            @RequestHeader(value = API_KEY_HEADER, required = false) String apiKey) {
+        if (apiKey == null || apiKey.isBlank()) {
+            return routerService.updateUserBudget(userId, request);
+        }
+        return routerService.updateUserBudget(userId, request, apiKey);
     }
 
     /**
@@ -156,27 +173,60 @@ public class GatewayController {
     }
 
     /**
+     * Genera una nueva clave API para un usuario sin cabecera de autenticación explícita.
+     *
+     * @param request DTO con el identificador de usuario y el nombre descriptivo de la clave
+     * @return DTO {@link ApiKeyCreatedResponse} incluyendo {@code rawApiKey}
+     */
+    public ApiKeyCreatedResponse createApiKey(CreateApiKeyRequest request) {
+        return createApiKey(request, null);
+    }
+
+    /**
      * Genera una nueva clave API para un usuario ({@code air_live_<32_hex>}), persistiendo en base de datos
      * únicamente su hash SHA-256 y devolviendo por única vez el secreto en texto plano.
      *
      * @param request DTO con el identificador de usuario y el nombre descriptivo de la clave
+     * @param apiKey  clave API opcional del llamante enviada en {@code X-API-Key}
      * @return DTO {@link ApiKeyCreatedResponse} incluyendo {@code rawApiKey} con estado HTTP 201 Created
      */
     @PostMapping("/keys")
     @ResponseStatus(HttpStatus.CREATED)
-    public ApiKeyCreatedResponse createApiKey(@RequestBody(required = false) CreateApiKeyRequest request) {
-        return routerService.createApiKey(request);
+    public ApiKeyCreatedResponse createApiKey(
+            @RequestBody(required = false) CreateApiKeyRequest request,
+            @RequestHeader(value = API_KEY_HEADER, required = false) String apiKey) {
+        if (apiKey == null || apiKey.isBlank()) {
+            return routerService.createApiKey(request);
+        }
+        return routerService.createApiKey(request, apiKey);
     }
 
     /**
-     * Revoca (desactiva) una clave API existente a partir de su identificador único (UUID).
+     * Revoca (desactiva) una clave API existente sin cabecera de autenticación explícita.
      *
      * @param keyId identificador único universal de la clave API a revocar
      */
+    public void revokeApiKey(UUID keyId) {
+        revokeApiKey(keyId, null);
+    }
+
+    /**
+     * Revoca (desactiva) una clave API existente a partir de su identificador único (UUID),
+     * verificando la titularidad si el llamante presenta una clave {@code air_live_...} ({@code [MEDIUM-01]}).
+     *
+     * @param keyId  identificador único universal de la clave API a revocar
+     * @param apiKey clave API opcional del llamante enviada en {@code X-API-Key}
+     */
     @DeleteMapping("/keys/{keyId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void revokeApiKey(@PathVariable UUID keyId) {
-        routerService.revokeApiKey(keyId);
+    public void revokeApiKey(
+            @PathVariable UUID keyId,
+            @RequestHeader(value = API_KEY_HEADER, required = false) String apiKey) {
+        if (apiKey == null || apiKey.isBlank()) {
+            routerService.revokeApiKey(keyId);
+            return;
+        }
+        routerService.revokeApiKey(keyId, apiKey);
     }
 
     /**
@@ -192,18 +242,35 @@ public class GatewayController {
     }
 
     /**
+     * Procesa una recarga de créditos prepago en la billetera de un usuario sin cabecera explícita.
+     *
+     * @param userId  identificador del usuario titular de la billetera
+     * @param request DTO con el importe en USD a abonar y el método de pago
+     * @return DTO {@link UserWalletResponse} con el saldo actualizado
+     */
+    public UserWalletResponse topUpUserWallet(String userId, WalletTopUpRequest request) {
+        return topUpUserWallet(userId, request, null);
+    }
+
+    /**
      * Procesa una recarga de créditos prepago en la billetera de un usuario y activa el control
-     * estricto de saldo ({@code walletEnforced = true}).
+     * estricto de saldo ({@code walletEnforced = true}), verificando la titularidad si se presenta
+     * una clave {@code air_live_...} ({@code [MEDIUM-01]}).
      *
      * @param userId  identificador del usuario titular de la billetera
      * @param request DTO con el importe en USD a abonar y el método de pago ({@code STRIPE_CARD} o {@code PAYPAL})
+     * @param apiKey  clave API opcional del llamante enviada en {@code X-API-Key}
      * @return DTO {@link UserWalletResponse} con el saldo actualizado
      */
     @PostMapping("/wallet/{userId}/topup")
     @ResponseStatus(HttpStatus.OK)
     public UserWalletResponse topUpUserWallet(
             @PathVariable String userId,
-            @RequestBody(required = false) WalletTopUpRequest request) {
-        return routerService.topUpUserWallet(userId, request);
+            @RequestBody(required = false) WalletTopUpRequest request,
+            @RequestHeader(value = API_KEY_HEADER, required = false) String apiKey) {
+        if (apiKey == null || apiKey.isBlank()) {
+            return routerService.topUpUserWallet(userId, request);
+        }
+        return routerService.topUpUserWallet(userId, request, apiKey);
     }
 }

@@ -53,6 +53,18 @@ public class RateLimitingFilter extends OncePerRequestFilter {
     private static final long WINDOW_DURATION_MS = 60_000L;
 
     /**
+     * Número máximo de buckets activos permitidos en memoria para prevenir ataques de agotamiento
+     * de Heap (OutOfMemoryError) mediante rotación masiva de cabeceras {@code X-API-Key}.
+     */
+    public static final int MAX_TRACKED_BUCKETS = 10_000;
+
+    /**
+     * Multiplicador de ráfaga máxima permitida por dirección IP cuando un cliente rota múltiples
+     * cabeceras {@code X-API-Key} desde el mismo origen de red.
+     */
+    public static final int IP_BURST_MULTIPLIER = 4;
+
+    /**
      * Número máximo de peticiones permitidas por minuto por cada cliente.
      */
     @Value("${airouter.security.rate-limit.requests-per-minute:20}")
@@ -109,7 +121,15 @@ public class RateLimitingFilter extends OncePerRequestFilter {
         String clientKey = resolveClientKey(request);
         long now = System.currentTimeMillis();
 
-        RateLimitEvaluation evaluation = evaluateRequest(clientKey, now);
+        evictExpiredBucketsIfNeeded(now);
+
+        RateLimitEvaluation evaluation = evaluateRequest(clientKey, now, maxRequestsPerMinute);
+        if (evaluation.allowed() && clientKey.startsWith("apikey:")) {
+            RateLimitEvaluation ipGuardEvaluation = evaluateIpGuard(request.getRemoteAddr(), now);
+            if (!ipGuardEvaluation.allowed()) {
+                evaluation = ipGuardEvaluation;
+            }
+        }
 
         if (!evaluation.allowed()) {
             String maskedClient = maskClientKeyForAudit(clientKey);
@@ -170,14 +190,27 @@ public class RateLimitingFilter extends OncePerRequestFilter {
 
     /**
      * Actualiza de forma atómica el contador de peticiones del cliente para la ventana en curso
-     * y determina si la petición debe ser permitida o rechazada.
+     * utilizando el límite estándar por minuto configurado.
      *
      * @param clientKey identificador del cliente
      * @param now       marca de tiempo actual en milisegundos
      * @return resultado de la evaluación con el indicador de permiso y los segundos de espera restantes
      */
     private RateLimitEvaluation evaluateRequest(String clientKey, long now) {
-        RateLimitBucket bucket = buckets.compute(clientKey, (key, existing) -> {
+        return evaluateRequest(clientKey, now, maxRequestsPerMinute);
+    }
+
+    /**
+     * Actualiza de forma atómica el contador de peticiones de un bucket para la ventana en curso
+     * y determina si la petición debe ser permitida o rechazada según el límite especificado.
+     *
+     * @param bucketKey         identificador único del bucket ({@code apikey:}, {@code ip:} o {@code ip-guard:})
+     * @param now               marca de tiempo actual en milisegundos
+     * @param maxAllowedInWindow número máximo de peticiones permitidas en la ventana de 60 segundos
+     * @return resultado de la evaluación con el indicador de permiso y los segundos de espera restantes
+     */
+    private RateLimitEvaluation evaluateRequest(String bucketKey, long now, int maxAllowedInWindow) {
+        RateLimitBucket bucket = buckets.compute(bucketKey, (key, existing) -> {
             if (existing == null || (now - existing.windowStartMillis) >= WINDOW_DURATION_MS) {
                 return new RateLimitBucket(now, new AtomicInteger(1));
             }
@@ -186,13 +219,54 @@ public class RateLimitingFilter extends OncePerRequestFilter {
         });
 
         int currentCount = bucket.requestCount.get();
-        if (currentCount > maxRequestsPerMinute) {
+        if (currentCount > maxAllowedInWindow) {
             long remainingMillis = (bucket.windowStartMillis + WINDOW_DURATION_MS) - now;
             long retryAfterSeconds = Math.max(1L, (long) Math.ceil(remainingMillis / 1000.0));
             return new RateLimitEvaluation(false, retryAfterSeconds);
         }
 
         return new RateLimitEvaluation(true, 0L);
+    }
+
+    /**
+     * Evalúa el freno secundario por dirección IP ({@code ip-guard:}) cuando la petición presenta
+     * una cabecera {@code X-API-Key}, impidiendo que un atacante evada indefinidamente el límite
+     * rotando miles de claves falsas distintas desde la misma dirección IP.
+     *
+     * @param remoteAddr dirección IP de origen de la petición
+     * @param now        marca de tiempo actual en milisegundos
+     * @return resultado de la evaluación del límite global por IP
+     */
+    private RateLimitEvaluation evaluateIpGuard(String remoteAddr, long now) {
+        String safeIp = (remoteAddr != null && !remoteAddr.isBlank()) ? remoteAddr.trim() : "unknown";
+        int ipBurstLimit = Math.max(1, maxRequestsPerMinute) * IP_BURST_MULTIPLIER;
+        return evaluateRequest("ip-guard:" + safeIp, now, ipBurstLimit);
+    }
+
+    /**
+     * Ejecuta la poda preventiva de ventanas expiradas cuando el mapa de contadores alcanza
+     * el umbral máximo {@link #MAX_TRACKED_BUCKETS}, protegiendo la memoria Heap frente a ataques
+     * de inundación de claves aleatorias.
+     *
+     * @param now marca de tiempo actual en milisegundos
+     */
+    public void evictExpiredBucketsIfNeeded(long now) {
+        if (buckets.size() < MAX_TRACKED_BUCKETS) {
+            return;
+        }
+        buckets.entrySet().removeIf(entry -> (now - entry.getValue().windowStartMillis) >= WINDOW_DURATION_MS);
+        if (buckets.size() >= MAX_TRACKED_BUCKETS) {
+            buckets.clear();
+        }
+    }
+
+    /**
+     * Devuelve el número actual de buckets registrados en memoria para inspección en auditorías y pruebas.
+     *
+     * @return cantidad de entradas activas en el mapa de control de tasa
+     */
+    public int getTrackedBucketCount() {
+        return buckets.size();
     }
 
     /**

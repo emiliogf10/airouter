@@ -375,4 +375,45 @@ class SecurityAndRateLimitingTest {
                         .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "X-Forbidden-Custom-Header"))
                 .andExpect(status().isForbidden());
     }
+
+    /**
+     * Prueba de regresión para el hallazgo de auditoría {@code MEDIUM-03}
+     * ({@code airouter.ratelimit.unvalidated-apikey-bucket-rotation}):
+     * verifica que si un atacante desde una misma dirección IP ({@code 198.51.100.77}) envía
+     * peticiones rotando una cabecera {@code X-API-Key} distinta en cada llamada ({@code "fake-key-1"}..{@code "fake-key-13"}),
+     * al superar el techo secundario {@code maxRequestsPerMinute * IP_BURST_MULTIPLIER} ({@code 3 * 4 = 12}),
+     * la petición nº 13 es bloqueada con estado HTTP {@code 429 Too Many Requests} y cabecera {@code Retry-After}.
+     *
+     * @throws Exception si ocurre un error durante la ejecución de la prueba MVC
+     */
+    @Test
+    @DisplayName("Regresión MEDIUM-03: RateLimitingFilter debe bloquear con HTTP 429 cuando una misma IP rota múltiples X-API-Key superando el techo ip-guard")
+    void shouldEnforceIpBurstGuardWhenAttackerRotatesMultipleFakeApiKeysFromSameIp() throws Exception {
+        int ipBurstMax = 3 * RateLimitingFilter.IP_BURST_MULTIPLIER; // 12 peticiones permitidas por IP
+
+        for (int i = 1; i <= ipBurstMax; i++) {
+            mockMvc.perform(post("/api/v1/router/prompt")
+                            .with(req -> {
+                                req.setRemoteAddr("198.51.100.77");
+                                return req;
+                            })
+                            .header("X-API-Key", "fake-key-" + i)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(VALID_PAYLOAD))
+                    .andExpect(status().isOk());
+        }
+
+        // La petición nº 13 con una clave nueva desde la misma IP 198.51.100.77 debe ser bloqueada por ip-guard
+        mockMvc.perform(post("/api/v1/router/prompt")
+                        .with(req -> {
+                            req.setRemoteAddr("198.51.100.77");
+                            return req;
+                        })
+                        .header("X-API-Key", "fake-key-13")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(VALID_PAYLOAD))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().exists("Retry-After"))
+                .andExpect(jsonPath("$.message", containsString("Límite de peticiones excedido")));
+    }
 }

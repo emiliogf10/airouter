@@ -60,7 +60,7 @@ flowchart TB
 | **Motor BD** | H2 Database (en memoria `airouterdb`) / PostgreSQL | Base de datos transaccional para desarrollo/tests e integración continua. |
 | **Frontend Core** | React 19 + TypeScript 5.9 + Vite 8 | Interfaz de usuario reactiva con tipado estático estricto. |
 | **Estilos y Gráficas** | Tailwind CSS v4 (`@tailwindcss/vite`), Lucide React, Recharts | Sistema de diseño estilo Vercel / `shadcn/ui` con **0 estilos en línea (`style=`)**. |
-| **Calidad y CI/CD** | JUnit 5, Mockito, MockMvc (63 tests) + Vitest, RTL (23 tests) + GitHub Actions & Dependabot | 86 tests automatizados ejecutados en cada Pull Request. |
+| **Calidad y CI/CD** | JUnit 5, Mockito, MockMvc (67 tests) + Vitest, RTL (23 tests) + GitHub Actions & Dependabot | 90 tests automatizados ejecutados en cada Pull Request. |
 
 ---
 
@@ -138,9 +138,15 @@ Cuando `GatewayController` recibe `POST /api/v1/router/prompt`, `RouterService` 
 ## 🛡️ 4. Seguridad, Rate Limiting y CORS (`04-auditor-seguridad`)
 
 1. **`RateLimitingFilter.java` (`OncePerRequestFilter`):**
-   * Protege `POST /api/v1/router/prompt` mediante ventanas fijas de 60 segundos en memoria (`ConcurrentHashMap<String, ClientRateWindow>`) identificando al cliente por `X-API-Key` (prioritario) o IP (`RemoteAddr`).
+   * Protege `POST /api/v1/router/prompt` mediante ventanas fijas de 60 segundos en memoria (`ConcurrentHashMap<String, RateLimitBucket>`) identificando al cliente por `X-API-Key` (prioritario) o IP (`RemoteAddr`).
    * Límite por defecto: **20 peticiones/minuto** (`airouter.security.rate-limit.requests-per-minute=20`).
+   * **Protección Anti-Rotación por IP y Poda de Memoria (`security-audit`):** Aplica además un freno secundario por IP (`ip-guard:<ip>` con techo `maxRequestsPerMinute * 4`) cuando se envían cabeceras `X-API-Key` rotativas y purga automáticamente las ventanas caducadas si el mapa alcanza `MAX_TRACKED_BUCKETS` (`10.000`).
    * Al superarse, devuelve **HTTP `429 Too Many Requests`**, cabecera `Retry-After` (segundos restantes) y cuerpo JSON `ErrorResponse`, enmascarando la clave en los logs (`apikey:sk-***`).
+2. **Endurecimiento Multi-Inquilino (`RouterService.java` y `application-prod.properties`):**
+   * **Vinculación `ApiKey.userId == PromptRequest.userId`:** Una clave `air_live_...` válida solo autoriza cargos sobre el mismo `userId` propietario de la clave (`HTTP 401 Unauthorized` en caso contrario).
+   * **Aislamiento de Caché Semántica BYOK:** Las respuestas simuladas en caché nunca eclipsan peticiones que incluyen una clave externa BYOK real, y las respuestas reales BYOK quedan acotadas a su propietario.
+   * **Serialización Atómica de Billetera (`walletLocks`):** Las recargas y descuentos de saldo en `UserWallet` se sincronizan atómicamente por `userId` para impedir condiciones de carrera (*double-spend*).
+   * **Perfil de Producción (`application-prod.properties`):** Deshabilita explícitamente la consola H2 (`spring.h2.console.enabled=false`).
 2. **`SecurityConfig.java`:**
    * Registra `RateLimitingFilter` con prioridad `Ordered.HIGHEST_PRECEDENCE + 10`.
    * Aplica CORS restrictivo autorizando `http://localhost:5173`, métodos `GET, POST, OPTIONS` en `/api/v1/**` y `GET, PUT, DELETE, OPTIONS` en `/api/v1/router/budget/**`, exponiendo la cabecera `Retry-After`.
