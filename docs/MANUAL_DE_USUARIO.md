@@ -74,8 +74,8 @@ Ubicada en la parte superior fija de la pantalla:
 
 ---
 
-### 3.3. Panel de Cortafuegos Presupuestario (`BudgetControlCard`) y Gestor de Claves API (`ApiKeyManagerCard`)
-Ubicados justo debajo de las 4 tarjetas principales en una cuadrícula de dos columnas:
+### 3.3. Paneles de Gobierno SaaS: Presupuesto (`BudgetControlCard`), Claves API (`ApiKeyManagerCard`) y Billetera Prepago (`WalletBillingCard`)
+Ubicados justo debajo de las 4 tarjetas principales en una cuadrícula de tres columnas:
 
 #### A) Cortafuegos Presupuestario (`BudgetControlCard`)
 Permite gobernar el techo de gasto del usuario activo:
@@ -96,6 +96,16 @@ Permite emitir y revocar credenciales propias del Gateway (`air_live_...`) asoci
 2. **Banner de Visualización Única:** Aparecerá un recuadro verde mostrando tu clave completa (`air_live_...`). Por seguridad (igual que en OpenAI, Stripe o GitHub), **el secreto completo solo se muestra una vez** porque en la base de datos únicamente se guarda su hash criptográfico **SHA-256**.
    * Pulsa **`Copiar clave`** para guardarla en el portapapeles o pulsa **`Usar en Simulador`** para inyectarla directamente en el campo `X-API-Key` de la consola inferior.
 3. **Revocar una clave:** En la lista inferior verás todas las claves del usuario con su prefijo enmascarado (`air_live_9f8e...`) y su estado (**`Activa`** o **`Revocada`**). Si pulsas **`Revocar`**, la clave quedará invalidada al instante y cualquier intento de uso devolverá **HTTP `401 Unauthorized`**.
+
+#### C) Billetera Prepago y Pasarela de Pagos (`WalletBillingCard`)
+Permite recargar paquetes de créditos prepago mediante **Tarjeta (Stripe)** o **PayPal** y ver cómo se descuentan los micro-céntimos en tiempo real con cada petición:
+* **Estados de la Billetera:**
+  * ⚪ **`Modo Pospago (Sin prepago)`:** Estado inicial por defecto antes de hacer la primera recarga.
+  * 🟢 **`Prepago Activo (Con Saldo)`:** Se activa al realizar cualquier recarga; cada consulta descuenta su coste exacto del **Saldo Disponible** (excepto los *Caché Hits*, que son gratuitos).
+  * 🔴 **`Saldo Agotado (0,000000 €)`:** Cuando el saldo prepago llega a cero, nuevas consultas con coste se bloquean con **HTTP `402 Payment Required`** hasta que recargues créditos.
+* **Cómo recargar créditos:**
+  1. Elige el método de pago (**`Tarjeta (Stripe)`** o **`PayPal`**).
+  2. Pulsa uno de los botones rápidos de recarga (**`Micro (+0,000050 €)`**, **`+ 5,00 €`** o **`+ 20,00 €`**) o introduce un importe personalizado y pulsa **`Recargar Créditos`**.
 
 ---
 

@@ -8,12 +8,15 @@ import { ModelDistributionChart } from './components/ModelDistributionChart';
 import { PromptPlayground } from './components/PromptPlayground';
 import { RecentLogsTable } from './components/RecentLogsTable';
 import { StatsCards } from './components/StatsCards';
+import { WalletBillingCard } from './components/WalletBillingCard';
 import {
   createDefaultUserBudget,
+  createDefaultUserWallet,
   fetchLogs,
   fetchStats,
   fetchUserApiKeys,
   fetchUserBudget,
+  fetchUserWallet,
 } from './services/api';
 import type {
   ApiKeyResponse,
@@ -21,6 +24,7 @@ import type {
   RouterResponse,
   RouterStatsResponse,
   UserBudgetResponse,
+  UserWalletResponse,
 } from './types/router';
 
 /**
@@ -47,6 +51,7 @@ const INITIAL_STATS: RouterStatsResponse = {
  * - El selector interactivo de moneda (`EUR €` seleccionado por defecto o `USD $`).
  * - El filtrado reactivo de telemetría e historial por usuario (`userId`).
  * - El panel de control de Cortafuegos Presupuestario FinOps (`BudgetControlCard`).
+ * - La Billetera Prepago y Pasarela de Pagos Stripe/PayPal (`WalletBillingCard`).
  * - El panel gestor de Claves API persistidas con hash SHA-256 (`ApiKeyManagerCard`).
  * - El visor modal de auditoría detallada (`LogInspectorDrawer`) y exportación CSV segura.
  * - La sincronización automática de estadísticas (`GET /api/v1/router/stats`) y registros (`GET /api/v1/router/logs`).
@@ -58,11 +63,15 @@ export const App: React.FC = () => {
   const [currency, setCurrency] = useState<CurrencyCode>('EUR');
   /** Filtro opcional por identificador de usuario (`userId`). */
   const [filterUserId, setFilterUserId] = useState<string>('');
-  /** Usuario actualmente inspeccionado en los paneles de presupuesto y claves (`demo-user` por defecto). */
+  /** Usuario actualmente inspeccionado en los paneles FinOps, billetera y claves (`demo-user` por defecto). */
   const [budgetUserId, setBudgetUserId] = useState<string>('demo-user');
   /** Estado del presupuesto FinOps del usuario gestionado. */
   const [userBudget, setUserBudget] = useState<UserBudgetResponse>(() =>
     createDefaultUserBudget('demo-user'),
+  );
+  /** Estado de la billetera prepago (`Billing`) del usuario gestionado. */
+  const [userWallet, setUserWallet] = useState<UserWalletResponse>(() =>
+    createDefaultUserWallet('demo-user'),
   );
   /** Lista de claves API asociadas al usuario activo. */
   const [userApiKeys, setUserApiKeys] = useState<ApiKeyResponse[]>([]);
@@ -98,6 +107,17 @@ export const App: React.FC = () => {
   }, []);
 
   /**
+   * Sincroniza de forma aislada el saldo de la billetera prepago (`Billing`) de un usuario.
+   *
+   * @param targetUser Identificador del usuario cuya billetera se desea cargar.
+   */
+  const loadWalletForUser = useCallback(async (targetUser: string) => {
+    const effectiveUser = targetUser.trim() || 'demo-user';
+    const walletData = await fetchUserWallet(effectiveUser);
+    setUserWallet(walletData);
+  }, []);
+
+  /**
    * Sincroniza de forma aislada las claves API de un usuario específico.
    *
    * @param targetUser Identificador del usuario cuyas claves se desean cargar.
@@ -111,7 +131,7 @@ export const App: React.FC = () => {
   /**
    * Consulta en paralelo las métricas (`/stats`) y el historial (`/logs`) del backend,
    * aplicando el filtro `filterUserId` cuando está definido, y posteriormente actualiza
-   * el estado del presupuesto FinOps y las claves API del usuario activo.
+   * el estado del presupuesto FinOps, la billetera prepago y las claves API del usuario activo.
    *
    * @param userFilter Identificador de usuario opcional para filtrar los datos.
    */
@@ -140,9 +160,10 @@ export const App: React.FC = () => {
       }
 
       void loadBudgetForUser(effectiveBudgetUser);
+      void loadWalletForUser(effectiveBudgetUser);
       void loadApiKeysForUser(effectiveBudgetUser);
     },
-    [budgetUserId, loadApiKeysForUser, loadBudgetForUser],
+    [budgetUserId, loadApiKeysForUser, loadBudgetForUser, loadWalletForUser],
   );
 
   useEffect(() => {
@@ -154,7 +175,7 @@ export const App: React.FC = () => {
 
   /**
    * Callback ejecutado cuando el simulador procesa un nuevo prompt con éxito,
-   * recargando las estadísticas, el historial y el presupuesto automáticamente.
+   * recargando las estadísticas, el historial, el presupuesto y el saldo prepago automáticamente.
    */
   const handlePromptSuccess = useCallback(
     (response: RouterResponse) => {
@@ -162,22 +183,30 @@ export const App: React.FC = () => {
       setBudgetUserId(targetUser);
       void loadDashboardData(filterUserId);
       void loadBudgetForUser(targetUser);
+      void loadWalletForUser(targetUser);
       void loadApiKeysForUser(targetUser);
     },
-    [filterUserId, loadApiKeysForUser, loadBudgetForUser, loadDashboardData],
+    [
+      filterUserId,
+      loadApiKeysForUser,
+      loadBudgetForUser,
+      loadDashboardData,
+      loadWalletForUser,
+    ],
   );
 
   /**
-   * Callback invocado cuando ocurre actividad de presupuesto o bloqueo HTTP 402 en el simulador.
+   * Callback invocado cuando ocurre actividad de presupuesto/billetera o bloqueo HTTP 402 en el simulador.
    */
   const handleBudgetActivity = useCallback(
     (targetUser: string) => {
       const cleanUser = targetUser.trim() || 'demo-user';
       setBudgetUserId(cleanUser);
       void loadBudgetForUser(cleanUser);
+      void loadWalletForUser(cleanUser);
       void loadApiKeysForUser(cleanUser);
     },
-    [loadApiKeysForUser, loadBudgetForUser],
+    [loadApiKeysForUser, loadBudgetForUser, loadWalletForUser],
   );
 
   /**
@@ -228,20 +257,26 @@ export const App: React.FC = () => {
         {/* Cuadrícula superior de métricas clave con MetricCard */}
         <StatsCards stats={stats} currency={currency} isLoading={isLoading} />
 
-        {/* Gobernanza por Usuario: Cortafuegos Presupuestario FinOps + Gestor de Claves API SHA-256 */}
+        {/* Gobernanza FinOps y Seguridad por Usuario: Presupuesto, Billetera Prepago y Claves API */}
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
           <BudgetControlCard
             budget={userBudget}
             currency={currency}
             onBudgetUpdated={setUserBudget}
           />
-          <ApiKeyManagerCard
-            userId={budgetUserId}
-            apiKeys={userApiKeys}
-            onKeysChanged={() => void loadApiKeysForUser(budgetUserId)}
-            onUseKeyInPlayground={handleUseKeyInPlayground}
+          <WalletBillingCard
+            wallet={userWallet}
+            currency={currency}
+            onWalletUpdated={setUserWallet}
           />
         </div>
+
+        <ApiKeyManagerCard
+          userId={budgetUserId}
+          apiKeys={userApiKeys}
+          onKeysChanged={() => void loadApiKeysForUser(budgetUserId)}
+          onUseKeyInPlayground={handleUseKeyInPlayground}
+        />
 
         {/* Sección central: Simulador interactivo + Distribución por modelo */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

@@ -28,12 +28,16 @@ import com.tuproyecto.airouter.models.dto.RouterResponse;
 import com.tuproyecto.airouter.models.dto.RouterStatsResponse;
 import com.tuproyecto.airouter.models.dto.UserBudgetRequest;
 import com.tuproyecto.airouter.models.dto.UserBudgetResponse;
+import com.tuproyecto.airouter.models.dto.UserWalletResponse;
+import com.tuproyecto.airouter.models.dto.WalletTopUpRequest;
 import com.tuproyecto.airouter.models.entities.ApiKey;
 import com.tuproyecto.airouter.models.entities.RequestLog;
 import com.tuproyecto.airouter.models.entities.UserBudget;
+import com.tuproyecto.airouter.models.entities.UserWallet;
 import com.tuproyecto.airouter.repositories.ApiKeyRepository;
 import com.tuproyecto.airouter.repositories.RequestLogRepository;
 import com.tuproyecto.airouter.repositories.UserBudgetRepository;
+import com.tuproyecto.airouter.repositories.UserWalletRepository;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Collections;
@@ -968,5 +972,104 @@ class RouterServiceTest {
                 )
         );
         verify(requestLogRepository, times(1)).save(any(RequestLog.class));
+    }
+
+    /**
+     * Verifica la recarga de créditos y el descuento automático de micro-céntimos en tiempo real
+     * en la Billetera Prepago ({@link RouterService#getUserWallet(String)},
+     * {@link RouterService#topUpUserWallet(String, WalletTopUpRequest)} y {@link RouterService#routePrompt(PromptRequest)}):
+     * un usuario comienza en {@code POSTPAID_UNLIMITED}, al recargar {@code $0.000010 USD} con {@code "PAYPAL"}
+     * pasa a {@code PREPAID_ACTIVE} ({@code walletEnforced == true}), y al enrutar un prompt simple de 4 tokens
+     * en Flash ({@code $0.000001 USD} redondeado a 6 decimales), su saldo queda exactamente en {@code $0.000009 USD}.
+     */
+    @Test
+    @DisplayName("Billetera Prepago (Recarga y Descuento): Debe pasar de POSTPAID_UNLIMITED a PREPAID_ACTIVE al recargar y descontar micro-céntimos al enrutar")
+    void shouldTopUpWalletToPrepaidActiveAndDeductMicroCentsOnRoutePrompt() {
+        UserWalletRepository mockWalletRepo = mock(UserWalletRepository.class);
+        routerService.setUserWalletRepository(mockWalletRepo);
+
+        when(mockWalletRepo.findByUserId("billing-user")).thenReturn(Optional.empty());
+
+        // 1. Estado inicial sin recargas -> POSTPAID_UNLIMITED
+        UserWalletResponse initialWallet = routerService.getUserWallet("  billing-user  ");
+        assertEquals("billing-user", initialWallet.userId());
+        assertEquals(RouterService.WALLET_STATUS_POSTPAID, initialWallet.status());
+        assertFalse(initialWallet.walletEnforced());
+        assertEquals(new BigDecimal("0.000000"), initialWallet.balanceUsd());
+
+        // 2. Recargar $0.000010 USD con PAYPAL -> PREPAID_ACTIVE
+        ArgumentCaptor<UserWallet> walletCaptor = ArgumentCaptor.forClass(UserWallet.class);
+        when(mockWalletRepo.save(walletCaptor.capture())).thenAnswer(invocation -> {
+            UserWallet saved = invocation.getArgument(0);
+            if (saved.getId() == null) {
+                saved.setId(UUID.randomUUID());
+            }
+            return saved;
+        });
+
+        UserWalletResponse toppedUp = routerService.topUpUserWallet(
+                "billing-user",
+                new WalletTopUpRequest(new BigDecimal("0.000010"), "paypal")
+        );
+
+        assertEquals(RouterService.WALLET_STATUS_ACTIVE, toppedUp.status());
+        assertTrue(toppedUp.walletEnforced());
+        assertEquals("PAYPAL", toppedUp.lastPaymentMethod());
+        assertEquals(new BigDecimal("0.000010"), toppedUp.balanceUsd());
+        assertEquals(new BigDecimal("0.000010"), toppedUp.totalToppedUpUsd());
+
+        // 3. Enrutar prompt sencillo de 16 caracteres (4 tokens en Flash = 4 * 0.15 / 1M = 0.0000006 -> redondeado a 6 decimales = $0.000001 USD)
+        UserWallet activeWalletEntity = walletCaptor.getValue();
+        when(mockWalletRepo.findByUserId("billing-user")).thenReturn(Optional.of(activeWalletEntity));
+        when(requestLogRepository.save(any(RequestLog.class))).thenAnswer(invocation -> {
+            RequestLog arg = invocation.getArgument(0);
+            arg.setId(UUID.randomUUID());
+            arg.setCreatedAt(LocalDateTime.now());
+            return arg;
+        });
+
+        RouterResponse routed = routerService.routePrompt(
+                new PromptRequest("billing-user", "1234567890123456")
+        );
+
+        assertEquals(RouterService.MODEL_FAST, routed.modelRouted());
+        assertEquals(4, routed.tokensEstimated());
+        assertEquals(new BigDecimal("0.000009"), activeWalletEntity.getBalanceUsd());
+    }
+
+    /**
+     * Verifica que cuando un usuario tiene activada la Billetera Prepago ({@code walletEnforced == true})
+     * y su saldo disponible es {@code $0.000000 USD} ({@code PREPAID_DEPLETED}), al enviar un prompt nuevo
+     * (no cacheado) {@link RouterService#routePrompt(PromptRequest)} lanza {@link BudgetExceededException}
+     * sin persistir ningún registro en {@link RequestLogRepository}.
+     */
+    @Test
+    @DisplayName("Billetera Prepago (Saldo Agotado): Debe lanzar BudgetExceededException y no guardar en BD cuando walletEnforced=true y balanceUsd=0")
+    void shouldThrowBudgetExceededExceptionWhenPrepaidWalletBalanceIsZero() {
+        UserWalletRepository mockWalletRepo = mock(UserWalletRepository.class);
+        routerService.setUserWalletRepository(mockWalletRepo);
+
+        UserWallet depletedWallet = UserWallet.builder()
+                .id(UUID.randomUUID())
+                .userId("depleted-user")
+                .balanceUsd(new BigDecimal("0.000000"))
+                .totalToppedUpUsd(new BigDecimal("0.000005"))
+                .walletEnforced(true)
+                .lastPaymentMethod("STRIPE_CARD")
+                .updatedAt(LocalDateTime.now())
+                .build();
+
+        when(mockWalletRepo.findByUserId("depleted-user")).thenReturn(Optional.of(depletedWallet));
+
+        UserWalletResponse walletState = routerService.getUserWallet("depleted-user");
+        assertEquals(RouterService.WALLET_STATUS_DEPLETED, walletState.status());
+
+        BudgetExceededException ex = assertThrows(
+                BudgetExceededException.class,
+                () -> routerService.routePrompt(new PromptRequest("depleted-user", "Prompt nuevo sin saldo prepago"))
+        );
+
+        assertTrue(ex.getMessage().contains("Saldo prepago agotado"));
+        verify(requestLogRepository, never()).save(any(RequestLog.class));
     }
 }

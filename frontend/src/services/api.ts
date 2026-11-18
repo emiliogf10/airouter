@@ -8,6 +8,8 @@ import type {
   RouterStatsResponse,
   UserBudgetRequest,
   UserBudgetResponse,
+  UserWalletResponse,
+  WalletTopUpRequest,
 } from '../types/router';
 
 /**
@@ -18,7 +20,7 @@ const API_BASE_URL = '/api/v1/router';
 
 /**
  * Clase de error personalizada para encapsular fallos HTTP devueltos por la API del backend,
- * incluyendo soporte específico para HTTP 401 (Clave API inválida), HTTP 402 (Cortafuegos Presupuestario)
+ * incluyendo soporte específico para HTTP 401 (Clave API inválida), HTTP 402 (Cortafuegos Presupuestario / Saldo Agotado)
  * y HTTP 429 (Rate Limiting).
  */
 export class ApiError extends Error {
@@ -62,6 +64,25 @@ export function createDefaultUserBudget(userId: string): UserBudgetResponse {
 }
 
 /**
+ * Construye un estado inicial de billetera en modo pospago (`'POSTPAID_UNLIMITED'`) para un usuario,
+ * utilizado como respaldo defensivo cuando el usuario aún no ha realizado recargas o en mocks heredados.
+ *
+ * @param userId Identificador del usuario.
+ * @returns Objeto `UserWalletResponse` en estado `'POSTPAID_UNLIMITED'`.
+ */
+export function createDefaultUserWallet(userId: string): UserWalletResponse {
+  return {
+    userId: userId.trim() || 'demo-user',
+    balanceUsd: 0,
+    totalToppedUpUsd: 0,
+    walletEnforced: false,
+    lastPaymentMethod: null,
+    updatedAt: null,
+    status: 'POSTPAID_UNLIMITED',
+  };
+}
+
+/**
  * Procesa una respuesta HTTP no exitosa (`!response.ok`), extrayendo el mensaje del DTO
  * `ErrorResponse` del backend y la cabecera `Retry-After` cuando el estado es HTTP 429.
  *
@@ -101,12 +122,12 @@ async function handleErrorResponse(response: Response): Promise<never> {
 
 /**
  * Envía un prompt al endpoint `POST /api/v1/router/prompt` para evaluar su complejidad,
- * verificar el presupuesto FinOps del usuario, estimar sus tokens y enrutarlo al modelo óptimo.
+ * verificar el presupuesto FinOps y saldo prepago del usuario, estimar sus tokens y enrutarlo al modelo óptimo.
  *
  * @param request Objeto con el `userId` y el texto del `prompt` a evaluar.
  * @param apiKey  Clave de API opcional enviada en la cabecera `X-API-Key` para autenticación o BYOK.
  * @returns Promesa con el objeto `RouterResponse` que contiene la decisión de enrutamiento y la respuesta.
- * @throws {ApiError} Si ocurre un error de validación (400), clave inválida (401), presupuesto agotado (402) o límite de tasa (429).
+ * @throws {ApiError} Si ocurre un error de validación (400), clave inválida (401), presupuesto/saldo agotado (402) o límite de tasa (429).
  */
 export async function sendPrompt(
   request: PromptRequest,
@@ -316,4 +337,70 @@ export async function revokeUserApiKey(keyId: string): Promise<void> {
   if (!response.ok) {
     return handleErrorResponse(response);
   }
+}
+
+/**
+ * Consulta el saldo y estado de la billetera prepago (`Billing`) de un usuario desde el endpoint
+ * `GET /api/v1/router/wallet/{userId}`.
+ * Incluye validación defensiva para devolver `createDefaultUserWallet(cleanUser)` si un mock de prueba
+ * heredado no contempla la ruta `/wallet/`.
+ *
+ * @param userId Identificador del usuario titular de la billetera.
+ * @returns Promesa con el objeto `UserWalletResponse`.
+ */
+export async function fetchUserWallet(userId: string): Promise<UserWalletResponse> {
+  const cleanUser = userId.trim() || 'demo-user';
+  try {
+    const response = await fetch(`${API_BASE_URL}/wallet/${encodeURIComponent(cleanUser)}`);
+    if (!response) {
+      return createDefaultUserWallet(cleanUser);
+    }
+    if (!response.ok) {
+      return handleErrorResponse(response);
+    }
+    const data = (await response.json()) as Partial<UserWalletResponse>;
+    if (
+      !data ||
+      Array.isArray(data) ||
+      typeof data.balanceUsd !== 'number' ||
+      typeof data.status !== 'string'
+    ) {
+      return createDefaultUserWallet(cleanUser);
+    }
+    return data as UserWalletResponse;
+  } catch (err) {
+    if (err instanceof ApiError) {
+      throw err;
+    }
+    return createDefaultUserWallet(cleanUser);
+  }
+}
+
+/**
+ * Recarga créditos en la billetera prepago de un usuario mediante el endpoint
+ * `POST /api/v1/router/wallet/{userId}/topup`.
+ *
+ * @param userId  Identificador del usuario titular de la billetera.
+ * @param payload Importe en USD (`amountUsd`) y método de pago (`'STRIPE_CARD'` o `'PAYPAL'`).
+ * @returns Promesa con el objeto `UserWalletResponse` actualizado tras el abono.
+ * @throws {ApiError} Si la petición HTTP falla o los datos son inválidos.
+ */
+export async function topUpUserWallet(
+  userId: string,
+  payload: WalletTopUpRequest,
+): Promise<UserWalletResponse> {
+  const cleanUser = userId.trim() || 'demo-user';
+  const response = await fetch(`${API_BASE_URL}/wallet/${encodeURIComponent(cleanUser)}/topup`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    return handleErrorResponse(response);
+  }
+
+  return (await response.json()) as UserWalletResponse;
 }

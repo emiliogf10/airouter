@@ -60,7 +60,7 @@ flowchart TB
 | **Motor BD** | H2 Database (en memoria `airouterdb`) / PostgreSQL | Base de datos transaccional para desarrollo/tests e integración continua. |
 | **Frontend Core** | React 19 + TypeScript 5.9 + Vite 8 | Interfaz de usuario reactiva con tipado estático estricto. |
 | **Estilos y Gráficas** | Tailwind CSS v4 (`@tailwindcss/vite`), Lucide React, Recharts | Sistema de diseño estilo Vercel / `shadcn/ui` con **0 estilos en línea (`style=`)**. |
-| **Calidad y CI/CD** | JUnit 5, Mockito, MockMvc (59 tests) + Vitest, RTL (23 tests) + GitHub Actions & Dependabot | 82 tests automatizados ejecutados en cada Pull Request. |
+| **Calidad y CI/CD** | JUnit 5, Mockito, MockMvc (63 tests) + Vitest, RTL (23 tests) + GitHub Actions & Dependabot | 86 tests automatizados ejecutados en cada Pull Request. |
 
 ---
 
@@ -80,6 +80,8 @@ Los scripts SQL residen en `airouter/src/main/resources/db/migration/`:
 4. **`V4__create_api_keys_table.sql`:**
    * Crea la tabla `api_keys` (`id UUID PK`, `user_id VARCHAR(120)`, `key_name VARCHAR(100)`, `key_prefix VARCHAR(32)`, `key_hash VARCHAR(64) UNIQUE`, `active BOOLEAN DEFAULT TRUE`, `created_at TIMESTAMP`) e índices `idx_api_keys_user_id` e `idx_api_keys_key_hash`.
    * Implementa el principio de **cero secretos en texto plano en base de datos**: las claves emitidas (`air_live_<32_hex>`) se generan con `SecureRandom` y se resumen con `MessageDigest.getInstance("SHA-256")` (`HexFormat`), almacenando únicamente el hash de 64 caracteres.
+5. **`V5__create_user_wallets_table.sql`:**
+   * Crea la tabla `user_wallets` (`id UUID PK`, `user_id VARCHAR(120) UNIQUE`, `balance_usd NUMERIC(19, 6)`, `total_topped_up_usd NUMERIC(19, 6)`, `wallet_enforced BOOLEAN DEFAULT FALSE`, `last_payment_method VARCHAR(40)`, `updated_at TIMESTAMP`) e índice `idx_user_wallets_user_id`.
 
 ### 2.2. Reglas de Diseño en Entidades JPA (`RequestLog.java` y `UserBudget.java`)
 * **Prohibición de `@Data` en JPA:** Conforme a `GEMINI.md`, las entidades utilizan exclusivamente `@Entity`, `@Getter`, `@Setter`, `@Builder`, `@NoArgsConstructor` y `@AllArgsConstructor`.

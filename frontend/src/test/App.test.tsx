@@ -951,4 +951,94 @@ describe('AI Cost Router Dashboard - Pruebas de Integración', () => {
       );
     });
   });
+
+  /**
+   * Verifica la Billetera Prepago y Pasarela de Pagos (`WalletBillingCard`, `data-testid="wallet-billing-card"`):
+   * - Visualización del estado inicial (`Modo Pospago (Sin prepago)` en `data-testid="wallet-status-badge"`).
+   * - Selección de pasarela `data-testid="payment-method-paypal"` y recarga pulsando `data-testid="wallet-topup-5"`.
+   * - Invocación de `POST /api/v1/router/wallet/demo-user/topup` y actualización de `data-testid="wallet-balance-value"`,
+   *   `data-testid="wallet-status-badge"` (`Prepago Activo (Con Saldo)`) y `data-testid="wallet-last-method"` (`PayPal`).
+   */
+  it('permite recargar créditos en WalletBillingCard seleccionando PayPal y actualiza el saldo y estado prepago', async () => {
+    let topUpUrlCalled = '';
+    let topUpBodyParsed: { amountUsd: number; paymentMethod: string } | null = null;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/wallet/') && url.includes('/topup') && init?.method === 'POST') {
+        topUpUrlCalled = url;
+        topUpBodyParsed = JSON.parse(String(init.body)) as {
+          amountUsd: number;
+          paymentMethod: string;
+        };
+        return new Response(
+          JSON.stringify({
+            userId: 'demo-user',
+            balanceUsd: 5.434783,
+            totalToppedUpUsd: 5.434783,
+            walletEnforced: true,
+            lastPaymentMethod: 'PAYPAL',
+            updatedAt: '2026-10-20T23:30:00',
+            status: 'PREPAID_ACTIVE',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+
+      if (url.includes('/wallet/')) {
+        return new Response(
+          JSON.stringify({
+            userId: 'demo-user',
+            balanceUsd: 0,
+            totalToppedUpUsd: 0,
+            walletEnforced: false,
+            lastPaymentMethod: null,
+            updatedAt: null,
+            status: 'POSTPAID_UNLIMITED',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+
+      if (url.includes('/stats')) {
+        return new Response(JSON.stringify(MOCK_GLOBAL_STATS), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify(MOCK_INITIAL_LOGS), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('wallet-billing-card')).toBeInTheDocument();
+      expect(screen.getByTestId('wallet-status-badge')).toHaveTextContent(
+        'Modo Pospago (Sin prepago)',
+      );
+      expect(screen.getByTestId('wallet-balance-value')).toHaveTextContent('0,000000 €');
+    });
+
+    // Seleccionar PayPal y pulsar recarga rápida de + 5,00 €
+    await userEvent.click(screen.getByTestId('payment-method-paypal'));
+    await userEvent.click(screen.getByTestId('wallet-topup-5'));
+
+    await waitFor(() => {
+      expect(topUpUrlCalled).toBe('/api/v1/router/wallet/demo-user/topup');
+      expect(topUpBodyParsed).toEqual({
+        amountUsd: 5.434783,
+        paymentMethod: 'PAYPAL',
+      });
+      expect(screen.getByTestId('wallet-status-badge')).toHaveTextContent(
+        'Prepago Activo (Con Saldo)',
+      );
+      expect(screen.getByTestId('wallet-balance-value')).toHaveTextContent('5,000000 €');
+      expect(screen.getByTestId('wallet-last-method')).toHaveTextContent('PayPal');
+    });
+  });
 });

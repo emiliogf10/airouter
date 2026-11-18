@@ -87,6 +87,52 @@ export interface ApiKeyCreatedResponse extends ApiKeyResponse {
 }
 
 /**
+ * Estado operativo de la billetera prepago (`Billing`) de un usuario:
+ * - `'POSTPAID_UNLIMITED'`: El usuario opera en modo pospago libre sin haber activado prepago.
+ * - `'PREPAID_ACTIVE'`: Billetera prepago activa con saldo disponible (`balanceUsd > 0`).
+ * - `'PREPAID_DEPLETED'`: Billetera prepago activa con saldo agotado (`balanceUsd <= 0`); bloquea nuevas consultas con HTTP 402.
+ */
+export type WalletStatus =
+  | 'POSTPAID_UNLIMITED'
+  | 'PREPAID_ACTIVE'
+  | 'PREPAID_DEPLETED';
+
+/**
+ * Métodos de pago soportados en la pasarela de recarga de créditos (`Billing`).
+ */
+export type PaymentMethodCode = 'STRIPE_CARD' | 'PAYPAL';
+
+/**
+ * DTO de entrada para recargar créditos en la billetera prepago de un usuario (`POST /api/v1/router/wallet/{userId}/topup`).
+ */
+export interface WalletTopUpRequest {
+  /** Importe a recargar expresado en dólares estadounidenses (USD, mayor que 0). */
+  amountUsd: number;
+  /** Código de la pasarela o método de pago empleado (`'STRIPE_CARD'` o `'PAYPAL'`). */
+  paymentMethod: PaymentMethodCode;
+}
+
+/**
+ * DTO de salida que representa el saldo prepago en tiempo real y el historial de recargas de un usuario (`GET /api/v1/router/wallet/{userId}`).
+ */
+export interface UserWalletResponse {
+  /** Identificador único del usuario titular de la billetera. */
+  userId: string;
+  /** Saldo prepago disponible actualmente en USD (precisión de 6 decimales). */
+  balanceUsd: number;
+  /** Suma histórica total recargada por el usuario en USD. */
+  totalToppedUpUsd: number;
+  /** Indica si el control de saldo prepago está activo (`true` tras la primera recarga). */
+  walletEnforced: boolean;
+  /** Último método de pago utilizado (`'STRIPE_CARD'`, `'PAYPAL'` o `null`). */
+  lastPaymentMethod: string | null;
+  /** Fecha y hora ISO de la última actualización de la billetera (`null` si nunca recargó). */
+  updatedAt: string | null;
+  /** Estado operativo actual de la billetera prepago. */
+  status: WalletStatus;
+}
+
+/**
  * DTO de entrada que representa una solicitud de evaluación y enrutamiento de un prompt hacia el backend.
  */
 export interface PromptRequest {
@@ -150,7 +196,7 @@ export interface RouterStatsResponse {
 
 /**
  * DTO de respuesta estandarizado devuelto por el backend cuando ocurre un error de validación (HTTP 400),
- * clave API inválida/revocada (HTTP 401), bloqueo presupuestario (HTTP 402 Payment Required) o límite de tasa (HTTP 429).
+ * clave API inválida/revocada (HTTP 401), bloqueo presupuestario o de billetera (HTTP 402 Payment Required) o límite de tasa (HTTP 429).
  */
 export interface ErrorResponse {
   /** Descripción legible en español del error ocurrido. */
