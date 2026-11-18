@@ -45,6 +45,13 @@ npm run dev
 ### Paso 3: Abrir la aplicación en el navegador
 Entra en: 👉 **`http://localhost:5173`**
 
+### Opción Alternativa: Arrancar todo en 1 solo comando con Docker Compose (PostgreSQL 17)
+Si tienes **Docker Desktop** instalado, puedes levantar la Base de Datos PostgreSQL 17, el Backend y el Frontend de una sola vez desde la raíz del proyecto sin abrir dos terminales:
+```powershell
+docker compose up --build -d
+```
+Y acceder directamente en tu navegador a 👉 **`http://localhost:5173`**.
+
 ---
 
 ## 🖥️ 3. Guía Detallada de la Interfaz (Sección por Sección)

@@ -171,9 +171,13 @@ Ubicado en `frontend/src/`, construido con **React 19**, **TypeScript** y **Tail
 
 ---
 
-## 🔄 6. Integración Continua (CI/CD) y Dependabot
+## 🔄 6. Integración Continua (CI/CD), Dependabot y Despliegue con Docker Compose
 
 * **`.github/workflows/ci.yml`:** Pipeline con permisos restringidos (`contents: read`) que ejecuta en paralelo:
-  * `backend-java-qa`: Java 21 (`temurin`) + `./mvnw clean test -B` (**55 tests**).
-  * `frontend-react-qa`: Node 22 + `npm ci`, `npm run lint`, `npm test -- --run` (**15 tests**) y `npm run build`.
+  * `backend-java-qa`: Java 21 (`temurin`) + `./mvnw clean test -B` (**67 tests**).
+  * `frontend-react-qa`: Node 22 + `npm ci`, `npm run lint`, `npm test -- --run` (**23 tests**) y `npm run build`.
 * **`.github/dependabot.yml`:** Auditoría semanal automática de dependencias para Maven (`/airouter`), npm (`/frontend`) y GitHub Actions (`/`).
+* **Arquitectura de Contenedores (`docker-compose.yml`):**
+  1. **`postgres` (`postgres:17-alpine`):** Base de datos relacional de producción con volumen persistente `postgres_data` y `healthcheck` (`pg_isready`) en la red aislada `airouter-net`.
+  2. **`backend` (`airouter/Dockerfile`):** Construcción Multi-Stage con `eclipse-temurin:21-jdk-alpine` y ejecución en `eclipse-temurin:21-jre-alpine` bajo un usuario del sistema sin privilegios (`USER appuser`). Arranca con `SPRING_PROFILES_ACTIVE=prod` (`application-prod.properties`), ejecutando automáticamente las migraciones Flyway `V1`..`V5` contra PostgreSQL y deshabilitando `/h2-console`.
+  3. **`frontend` (`frontend/Dockerfile` + `frontend/nginx.conf`):** Construcción estática con `node:22-alpine` servida por `nginx:1.27-alpine`, actuando como *Reverse Proxy* de `/api/` hacia `http://backend:8080/api/` e inyectando cabeceras de seguridad (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`).

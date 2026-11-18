@@ -1,0 +1,11 @@
+# =============================================================================
+# Exclusiones del Contexto de Construcción Docker — Backend (airouter/)
+# =============================================================================
+# Nota: Se conserva .mvn/ para permitir que ./mvnw funcione dentro del contenedor.
+target/
+*.log
+.git
+.gitignore
+*.iml
+.idea/
+.vscode/

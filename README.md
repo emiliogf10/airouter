@@ -9,9 +9,10 @@
 * **Backend:** Java 21, Spring Boot 4.1.1 (WebMVC, Spring Data JPA), Lombok.
 * **Base de Datos y Migraciones:**
   * **Desarrollo / Tests:** H2 Database (en memoria).
-  * **Producción (Objetivo):** PostgreSQL.
-  * **Control de Esquema:** **Flyway** (`spring-boot-starter-flyway` + `flyway-core`) con validación estricta en Hibernate (`spring.jpa.hibernate.ddl-auto=validate`).
+  * **Producción / Docker (`perfil prod`):** PostgreSQL 17 (`postgres:17-alpine`).
+  * **Control de Esquema:** **Flyway** (`spring-boot-starter-flyway` + `flyway-core` + `flyway-database-postgresql`) con validación estricta en Hibernate (`spring.jpa.hibernate.ddl-auto=validate`).
 * **Frontend:** React 19, Vite, TypeScript, Tailwind CSS v4, Recharts, Lucide React, Vitest + Testing Library.
+* **Contenedores y CI/CD:** Docker Multi-Stage (`eclipse-temurin:21-jre-alpine` no-root + `nginx:1.27-alpine`), Docker Compose, GitHub Actions CI y Dependabot.
 
 ---
 
@@ -200,4 +201,12 @@ npm test
 npm run lint
 npm run build
 ```
+
+### 5. Despliegue Full-Stack en 1 Comando con Docker Compose + PostgreSQL 17
+Levanta automáticamente **PostgreSQL 17** (con volumen persistente y healthcheck), el **Backend Spring Boot** (con perfil `prod` y ejecución de las 5 migraciones Flyway `V1`..`V5`) y el **Frontend React 19 + Nginx Reverse Proxy** en `http://localhost:5173`:
+
+```bash
+docker compose up --build -d
+```
+*(Para detener los contenedores: `docker compose down`).*
 

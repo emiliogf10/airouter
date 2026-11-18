@@ -23,6 +23,8 @@ npm run dev
 
 Abre tu navegador en: 👉 **`http://localhost:5173`**
 
+*(Alternativa con Docker: si prefieres levantarlo con PostgreSQL 17 en un solo comando desde la raíz, ejecuta `docker compose up --build -d` y entra en `http://localhost:5173`).*
+
 ---
 
 ## ✅ Checklist de Pruebas Funcionales

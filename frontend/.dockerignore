@@ -1,0 +1,11 @@
+# =============================================================================
+# Exclusiones del Contexto de Construcción Docker — Frontend (frontend/)
+# =============================================================================
+node_modules
+dist
+.git
+.gitignore
+*.log
+.idea/
+.vscode/
+coverage/
