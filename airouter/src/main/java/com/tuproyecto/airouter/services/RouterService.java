@@ -12,12 +12,16 @@ import com.tuproyecto.airouter.models.dto.RouterResponse;
 import com.tuproyecto.airouter.models.dto.RouterStatsResponse;
 import com.tuproyecto.airouter.models.dto.UserBudgetRequest;
 import com.tuproyecto.airouter.models.dto.UserBudgetResponse;
+import com.tuproyecto.airouter.models.dto.UserWalletResponse;
+import com.tuproyecto.airouter.models.dto.WalletTopUpRequest;
 import com.tuproyecto.airouter.models.entities.ApiKey;
 import com.tuproyecto.airouter.models.entities.RequestLog;
 import com.tuproyecto.airouter.models.entities.UserBudget;
+import com.tuproyecto.airouter.models.entities.UserWallet;
 import com.tuproyecto.airouter.repositories.ApiKeyRepository;
 import com.tuproyecto.airouter.repositories.RequestLogRepository;
 import com.tuproyecto.airouter.repositories.UserBudgetRepository;
+import com.tuproyecto.airouter.repositories.UserWalletRepository;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
@@ -120,6 +124,31 @@ public class RouterService {
     public static final double BUDGET_DOWNGRADE_THRESHOLD_PERCENT = 80.0;
 
     /**
+     * Estado de la billetera cuando el usuario opera en modo pospago libre sin saldo prepago obligatorio.
+     */
+    public static final String WALLET_STATUS_POSTPAID = "POSTPAID_UNLIMITED";
+
+    /**
+     * Estado de la billetera cuando el usuario tiene el modo prepago activo y saldo disponible ({@code > 0}).
+     */
+    public static final String WALLET_STATUS_ACTIVE = "PREPAID_ACTIVE";
+
+    /**
+     * Estado de la billetera cuando el usuario tiene el modo prepago activo pero su saldo se ha agotado ({@code <= 0}).
+     */
+    public static final String WALLET_STATUS_DEPLETED = "PREPAID_DEPLETED";
+
+    /**
+     * Pasarela de pago por defecto cuando no se especifica método en la recarga de créditos.
+     */
+    public static final String DEFAULT_PAYMENT_METHOD = "STRIPE_CARD";
+
+    /**
+     * Longitud máxima permitida para el identificador del método de pago en la tabla {@code user_wallets}.
+     */
+    public static final int MAX_PAYMENT_METHOD_LENGTH = 40;
+
+    /**
      * Tarifa de referencia en dólares estadounidenses (USD) por cada millón de tokens
      * procesados por el modelo económico ({@link #MODEL_FAST}).
      */
@@ -188,6 +217,11 @@ public class RouterService {
     private ApiKeyRepository apiKeyRepository;
 
     /**
+     * Repositorio JPA para la gestión de la billetera prepago de créditos por usuario (Billing).
+     */
+    private UserWalletRepository userWalletRepository;
+
+    /**
      * Generador criptográfico de números aleatorios para la emisión de claves {@code air_live_...}.
      */
     private final SecureRandom secureRandom = new SecureRandom();
@@ -215,7 +249,7 @@ public class RouterService {
      * @param requestLogRepository repositorio de persistencia de registros de peticiones
      */
     public RouterService(RequestLogRepository requestLogRepository) {
-        this(requestLogRepository, null, null, null, "");
+        this(requestLogRepository, null, null, null, null, "");
     }
 
     /**
@@ -228,7 +262,7 @@ public class RouterService {
     public RouterService(
             RequestLogRepository requestLogRepository,
             UserBudgetRepository userBudgetRepository) {
-        this(requestLogRepository, userBudgetRepository, null, null, "");
+        this(requestLogRepository, userBudgetRepository, null, null, null, "");
     }
 
     /**
@@ -243,7 +277,7 @@ public class RouterService {
             RequestLogRepository requestLogRepository,
             GeminiRestClient geminiRestClient,
             String serverApiKey) {
-        this(requestLogRepository, null, null, geminiRestClient, serverApiKey);
+        this(requestLogRepository, null, null, null, geminiRestClient, serverApiKey);
     }
 
     /**
@@ -259,7 +293,25 @@ public class RouterService {
             UserBudgetRepository userBudgetRepository,
             GeminiRestClient geminiRestClient,
             String serverApiKey) {
-        this(requestLogRepository, userBudgetRepository, null, geminiRestClient, serverApiKey);
+        this(requestLogRepository, userBudgetRepository, null, null, geminiRestClient, serverApiKey);
+    }
+
+    /**
+     * Constructor de compatibilidad de cinco argumentos para pruebas unitarias previas.
+     *
+     * @param requestLogRepository repositorio de persistencia de registros de peticiones
+     * @param userBudgetRepository repositorio de persistencia de límites presupuestarios por usuario
+     * @param apiKeyRepository     repositorio de persistencia de claves API con hash SHA-256
+     * @param geminiRestClient     cliente HTTP para invocar la API de Google Gemini
+     * @param serverApiKey         clave de API configurada en el servidor ({@code airouter.gemini.api-key})
+     */
+    public RouterService(
+            RequestLogRepository requestLogRepository,
+            UserBudgetRepository userBudgetRepository,
+            ApiKeyRepository apiKeyRepository,
+            GeminiRestClient geminiRestClient,
+            String serverApiKey) {
+        this(requestLogRepository, userBudgetRepository, apiKeyRepository, null, geminiRestClient, serverApiKey);
     }
 
     /**
@@ -269,6 +321,7 @@ public class RouterService {
      * @param requestLogRepository repositorio de persistencia de registros de peticiones
      * @param userBudgetRepository repositorio de persistencia de límites presupuestarios por usuario
      * @param apiKeyRepository     repositorio de persistencia de claves API con hash SHA-256
+     * @param userWalletRepository repositorio de persistencia de billeteras prepago por usuario
      * @param geminiRestClient     cliente HTTP para invocar la API de Google Gemini
      * @param serverApiKey         clave de API configurada en el servidor ({@code airouter.gemini.api-key})
      */
@@ -277,11 +330,13 @@ public class RouterService {
             RequestLogRepository requestLogRepository,
             UserBudgetRepository userBudgetRepository,
             ApiKeyRepository apiKeyRepository,
+            UserWalletRepository userWalletRepository,
             GeminiRestClient geminiRestClient,
             @Value("${airouter.gemini.api-key:}") String serverApiKey) {
         this.requestLogRepository = requestLogRepository;
         this.userBudgetRepository = userBudgetRepository;
         this.apiKeyRepository = apiKeyRepository;
+        this.userWalletRepository = userWalletRepository;
         this.geminiRestClient = geminiRestClient;
         this.serverApiKey = serverApiKey != null ? serverApiKey.trim() : "";
     }
@@ -302,6 +357,15 @@ public class RouterService {
      */
     public void setApiKeyRepository(ApiKeyRepository apiKeyRepository) {
         this.apiKeyRepository = apiKeyRepository;
+    }
+
+    /**
+     * Permite asignar o reemplazar el repositorio de billeteras prepago en pruebas unitarias.
+     *
+     * @param userWalletRepository instancia del repositorio de billeteras de usuario
+     */
+    public void setUserWalletRepository(UserWalletRepository userWalletRepository) {
+        this.userWalletRepository = userWalletRepository;
     }
 
     /**
@@ -362,6 +426,8 @@ public class RouterService {
         } else {
             isCacheHit = false;
             selectedModel = firewallModel;
+
+            evaluateAndDeductPrepaidWalletIfEnforced(normalizedUserId, selectedModel, tokensEstimated, false);
 
             log.info("Enrutando petición del usuario '{}' [tokens estimados: {}] -> modelo seleccionado: {}",
                     normalizedUserId, tokensEstimated, selectedModel);
@@ -805,6 +871,219 @@ public class RouterService {
             log.info("Clave API revocada exitosamente [id='{}', prefijo='{}', usuario='{}'].",
                     apiKey.getId(), apiKey.getKeyPrefix(), apiKey.getUserId());
         });
+    }
+
+    /**
+     * Consulta el estado actual de la Billetera Prepago ({@code Token Credits Wallet}) de un usuario.
+     *
+     * <p>Si el usuario aún no ha realizado ninguna recarga o no existe en {@code user_wallets}, devuelve
+     * el estado por defecto {@link #WALLET_STATUS_POSTPAID} con {@code walletEnforced = false} y
+     * saldos a {@code 0.000000}.</p>
+     *
+     * @param userId identificador único del usuario titular
+     * @return DTO {@link UserWalletResponse} con el saldo disponible, total recargado y estado operativo
+     * @throws InvalidPromptException si el identificador de usuario es nulo, está en blanco o supera 120 caracteres
+     */
+    @Transactional(readOnly = true)
+    public UserWalletResponse getUserWallet(String userId) {
+        String cleanedUserId = validateAndTrimBudgetUserId(userId);
+        if (userWalletRepository == null) {
+            return buildPostpaidWalletResponse(cleanedUserId);
+        }
+
+        Optional<UserWallet> walletOpt = userWalletRepository.findByUserId(cleanedUserId);
+        if (walletOpt.isEmpty()) {
+            return buildPostpaidWalletResponse(cleanedUserId);
+        }
+
+        return toUserWalletResponse(walletOpt.get());
+    }
+
+    /**
+     * Abona una recarga de créditos prepago en la billetera de un usuario y activa el control
+     * estricto de saldo ({@code walletEnforced = true}).
+     *
+     * @param userId  identificador del usuario titular de la billetera
+     * @param request DTO con el importe en USD a recargar ({@code > 0}) y el método de pago ({@code STRIPE_CARD} o {@code PAYPAL})
+     * @return DTO {@link UserWalletResponse} con el nuevo saldo actualizado y estado {@link #WALLET_STATUS_ACTIVE}
+     * @throws InvalidPromptException si el usuario es inválido o el importe de recarga es nulo o {@code <= 0}
+     */
+    @Transactional
+    public UserWalletResponse topUpUserWallet(String userId, WalletTopUpRequest request) {
+        String cleanedUserId = validateAndTrimBudgetUserId(userId);
+        if (request == null || request.amountUsd() == null || request.amountUsd().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new InvalidPromptException("El importe de recarga debe ser mayor que cero.");
+        }
+
+        String normalizedPaymentMethod = DEFAULT_PAYMENT_METHOD;
+        if (request.paymentMethod() != null && !request.paymentMethod().isBlank()) {
+            normalizedPaymentMethod = request.paymentMethod().trim().toUpperCase(Locale.ROOT);
+            if (normalizedPaymentMethod.length() > MAX_PAYMENT_METHOD_LENGTH) {
+                throw new InvalidPromptException(
+                        "El método de pago no puede superar los " + MAX_PAYMENT_METHOD_LENGTH + " caracteres.");
+            }
+        }
+
+        BigDecimal topUpAmount = request.amountUsd().setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+        LocalDateTime now = LocalDateTime.now();
+
+        if (userWalletRepository == null) {
+            UserWallet transientWallet = UserWallet.builder()
+                    .userId(cleanedUserId)
+                    .balanceUsd(topUpAmount)
+                    .totalToppedUpUsd(topUpAmount)
+                    .walletEnforced(Boolean.TRUE)
+                    .lastPaymentMethod(normalizedPaymentMethod)
+                    .updatedAt(now)
+                    .build();
+            return toUserWalletResponse(transientWallet);
+        }
+
+        UserWallet walletEntity = userWalletRepository.findByUserId(cleanedUserId)
+                .orElseGet(() -> UserWallet.builder()
+                        .userId(cleanedUserId)
+                        .balanceUsd(BigDecimal.ZERO.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP))
+                        .totalToppedUpUsd(BigDecimal.ZERO.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP))
+                        .walletEnforced(Boolean.TRUE)
+                        .build());
+
+        BigDecimal currentBalance = walletEntity.getBalanceUsd() != null
+                ? walletEntity.getBalanceUsd()
+                : BigDecimal.ZERO;
+        BigDecimal currentTotalToppedUp = walletEntity.getTotalToppedUpUsd() != null
+                ? walletEntity.getTotalToppedUpUsd()
+                : BigDecimal.ZERO;
+
+        walletEntity.setBalanceUsd(currentBalance.add(topUpAmount).setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP));
+        walletEntity.setTotalToppedUpUsd(currentTotalToppedUp.add(topUpAmount).setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP));
+        walletEntity.setWalletEnforced(Boolean.TRUE);
+        walletEntity.setLastPaymentMethod(normalizedPaymentMethod);
+        walletEntity.setUpdatedAt(now);
+
+        UserWallet savedWallet = userWalletRepository.save(walletEntity);
+        log.info("Recarga prepago completada [usuario='{}', abono=${} USD, pasarela='{}', nuevo saldo=${} USD].",
+                cleanedUserId, topUpAmount.toPlainString(), normalizedPaymentMethod, savedWallet.getBalanceUsd().toPlainString());
+
+        return toUserWalletResponse(savedWallet);
+    }
+
+    /**
+     * Evalúa si el usuario tiene activada la Billetera Prepago ({@code walletEnforced == true}) y,
+     * en caso de tratarse de una petición con coste ({@code !isCacheHit}), verifica que disponga de
+     * saldo positivo y descuenta automáticamente los micro-céntimos correspondientes a la inferencia.
+     *
+     * @param userId          identificador normalizado del usuario
+     * @param selectedModel   modelo LLM elegido para procesar la petición
+     * @param tokensEstimated cantidad de tokens estimados del prompt
+     * @param isCacheHit      {@code true} si la respuesta proviene de la Caché Semántica a coste cero
+     * @throws BudgetExceededException si el usuario tiene {@code walletEnforced == true}, {@code balanceUsd <= 0} y no es acierto de caché
+     */
+    private void evaluateAndDeductPrepaidWalletIfEnforced(
+            String userId,
+            String selectedModel,
+            int tokensEstimated,
+            boolean isCacheHit) {
+        if (isCacheHit || userWalletRepository == null) {
+            return;
+        }
+
+        Optional<UserWallet> walletOpt = userWalletRepository.findByUserId(userId);
+        if (walletOpt.isEmpty() || !Boolean.TRUE.equals(walletOpt.get().getWalletEnforced())) {
+            return;
+        }
+
+        UserWallet wallet = walletOpt.get();
+        BigDecimal currentBalance = wallet.getBalanceUsd() != null
+                ? wallet.getBalanceUsd().setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP)
+                : BigDecimal.ZERO.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+
+        if (currentBalance.compareTo(BigDecimal.ZERO) <= 0) {
+            log.warn("Billetera Prepago [SALDO AGOTADO - HTTP 402]: Usuario '{}' sin créditos disponibles (${} USD).",
+                    userId, currentBalance.toPlainString());
+            throw new BudgetExceededException(
+                    String.format(
+                            "Saldo prepago agotado: la billetera del usuario '%s' tiene $%s USD disponibles. Recargue créditos para continuar.",
+                            userId,
+                            currentBalance.toPlainString()
+                    ),
+                    userId,
+                    wallet.getTotalToppedUpUsd(),
+                    currentBalance
+            );
+        }
+
+        BigDecimal ratePerMillion = MODEL_PRO.equals(selectedModel)
+                ? COST_PER_MILLION_TOKENS_PRO
+                : COST_PER_MILLION_TOKENS_FAST;
+        BigDecimal requestCostUsd = BigDecimal.valueOf(tokensEstimated)
+                .multiply(ratePerMillion)
+                .divide(ONE_MILLION_TOKENS, INTERNAL_CALCULATION_SCALE, RoundingMode.HALF_UP)
+                .setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+
+        BigDecimal zeroScaled = BigDecimal.ZERO.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+        BigDecimal updatedBalance = currentBalance.subtract(requestCostUsd)
+                .max(zeroScaled)
+                .setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+
+        wallet.setBalanceUsd(updatedBalance);
+        wallet.setUpdatedAt(LocalDateTime.now());
+        userWalletRepository.save(wallet);
+    }
+
+    /**
+     * Construye la respuesta por defecto para un usuario que aún no ha activado la billetera prepago.
+     *
+     * @param userId identificador del usuario
+     * @return DTO {@link UserWalletResponse} en estado {@link #WALLET_STATUS_POSTPAID}
+     */
+    private UserWalletResponse buildPostpaidWalletResponse(String userId) {
+        BigDecimal zeroScaled = BigDecimal.ZERO.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+        return new UserWalletResponse(
+                userId,
+                zeroScaled,
+                zeroScaled,
+                false,
+                null,
+                null,
+                WALLET_STATUS_POSTPAID
+        );
+    }
+
+    /**
+     * Transforma una entidad {@link UserWallet} en su DTO {@link UserWalletResponse} determinando
+     * el estado operativo ({@link #WALLET_STATUS_POSTPAID}, {@link #WALLET_STATUS_ACTIVE} o {@link #WALLET_STATUS_DEPLETED}).
+     *
+     * @param wallet entidad de billetera persistida
+     * @return DTO {@link UserWalletResponse} con importes escalados a 6 decimales
+     */
+    private UserWalletResponse toUserWalletResponse(UserWallet wallet) {
+        BigDecimal zeroScaled = BigDecimal.ZERO.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
+        BigDecimal scaledBalance = wallet.getBalanceUsd() != null
+                ? wallet.getBalanceUsd().setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP)
+                : zeroScaled;
+        BigDecimal scaledTotalToppedUp = wallet.getTotalToppedUpUsd() != null
+                ? wallet.getTotalToppedUpUsd().setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP)
+                : zeroScaled;
+        boolean enforced = Boolean.TRUE.equals(wallet.getWalletEnforced());
+
+        String status;
+        if (!enforced) {
+            status = WALLET_STATUS_POSTPAID;
+        } else if (scaledBalance.compareTo(BigDecimal.ZERO) > 0) {
+            status = WALLET_STATUS_ACTIVE;
+        } else {
+            status = WALLET_STATUS_DEPLETED;
+        }
+
+        return new UserWalletResponse(
+                wallet.getUserId(),
+                scaledBalance,
+                scaledTotalToppedUp,
+                enforced,
+                wallet.getLastPaymentMethod(),
+                wallet.getUpdatedAt(),
+                status
+        );
     }
 
     /**

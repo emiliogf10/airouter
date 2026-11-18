@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.tuproyecto.airouter.models.entities.ApiKey;
 import com.tuproyecto.airouter.models.entities.RequestLog;
 import com.tuproyecto.airouter.models.entities.UserBudget;
+import com.tuproyecto.airouter.models.entities.UserWallet;
 import com.tuproyecto.airouter.services.RouterService;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -51,13 +52,20 @@ class RequestLogRepositoryTest {
     private ApiKeyRepository apiKeyRepository;
 
     /**
-     * Limpia todos los registros de las tablas {@code request_logs}, {@code user_budgets} y {@code api_keys} antes de cada prueba.
+     * Repositorio JPA de billeteras prepago por usuario (migración Flyway V5) bajo prueba.
+     */
+    @Autowired
+    private UserWalletRepository userWalletRepository;
+
+    /**
+     * Limpia todos los registros de las tablas {@code request_logs}, {@code user_budgets}, {@code api_keys} y {@code user_wallets} antes de cada prueba.
      */
     @BeforeEach
     void setUp() {
         requestLogRepository.deleteAll();
         userBudgetRepository.deleteAll();
         apiKeyRepository.deleteAll();
+        userWalletRepository.deleteAll();
     }
 
     /**
@@ -300,5 +308,40 @@ class RequestLogRepositoryTest {
         List<ApiKey> userKeys = apiKeyRepository.findByUserIdOrderByCreatedAtDesc("sec-user-01");
         assertEquals(1, userKeys.size());
         assertEquals(saved.getId(), userKeys.get(0).getId());
+    }
+
+    /**
+     * Verifica la migración Flyway {@code V5__create_user_wallets_table.sql} y las operaciones de
+     * {@link UserWalletRepository}: guardado de una entidad {@link UserWallet} validando la precisión
+     * de 6 decimales en {@code balanceUsd} y {@code totalToppedUpUsd}, búsqueda mediante
+     * {@link UserWalletRepository#findByUserId(String)} y contrato {@code equals}/{@code hashCode}.
+     */
+    @Test
+    @DisplayName("Migración V5 (user_wallets): Debe persistir y buscar por userId un UserWallet con precisión de 6 decimales")
+    void shouldSaveAndFindUserWalletByUserIdWithSixDecimalScale() {
+        UserWallet wallet = UserWallet.builder()
+                .userId("wallet-user-01")
+                .balanceUsd(new BigDecimal("5.123456"))
+                .totalToppedUpUsd(new BigDecimal("10.654321"))
+                .walletEnforced(Boolean.TRUE)
+                .lastPaymentMethod("STRIPE_CARD")
+                .updatedAt(null)
+                .build();
+
+        UserWallet saved = userWalletRepository.saveAndFlush(wallet);
+
+        assertNotNull(saved.getId(), "El UUID de UserWallet debe generarse automáticamente");
+        assertNotNull(saved.getUpdatedAt(), "El campo updatedAt debe poblarse mediante @PrePersist");
+        assertTrue(saved.getWalletEnforced());
+        assertEquals(0, new BigDecimal("5.123456").compareTo(saved.getBalanceUsd()));
+        assertEquals(0, new BigDecimal("10.654321").compareTo(saved.getTotalToppedUpUsd()));
+
+        Optional<UserWallet> foundOpt = userWalletRepository.findByUserId("wallet-user-01");
+        assertTrue(foundOpt.isPresent());
+        assertEquals(0, new BigDecimal("5.123456").compareTo(foundOpt.get().getBalanceUsd()));
+        assertEquals(0, new BigDecimal("10.654321").compareTo(foundOpt.get().getTotalToppedUpUsd()));
+        assertEquals("STRIPE_CARD", foundOpt.get().getLastPaymentMethod());
+        assertEquals(saved, foundOpt.get());
+        assertEquals(saved.hashCode(), foundOpt.get().hashCode());
     }
 }

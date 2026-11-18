@@ -66,6 +66,7 @@ El esquema de base de datos está gobernado exclusivamente por **Flyway** median
 * **`V2__create_user_budgets_table.sql`**: Crea la tabla `user_budgets` (`id`, `user_id`, `max_budget_usd`, `auto_downgrade_enabled`, `updated_at`) con restricción única e índice B-Tree sobre `user_id` para el cortafuegos presupuestario FinOps.
 * **`V3__add_cache_hit_to_request_logs.sql`**: Añade la columna `cache_hit` (`BOOLEAN NOT NULL DEFAULT FALSE`) y el índice `idx_request_logs_cache_hit` a `request_logs` para la **Caché Semántica de Coste Cero (*Zero-Cost Cache*)**.
 * **`V4__create_api_keys_table.sql`**: Crea la tabla `api_keys` (`id`, `user_id`, `key_name`, `key_prefix`, `key_hash` SHA-256 único, `active`, `created_at`) para la gestión criptográfica de claves API por usuario sin almacenar secretos en texto plano.
+* **`V5__create_user_wallets_table.sql`**: Crea la tabla `user_wallets` (`id`, `user_id` único, `balance_usd`, `total_topped_up_usd`, `wallet_enforced`, `last_payment_method`, `updated_at`) para la **Billetera Prepago (*Token Credits Wallet*) y Pasarela de Pagos (`Billing`)**.
 
 ### Acceso a la Consola H2 (Desarrollo)
 Con el backend en ejecución, puedes inspeccionar la base de datos en memoria desde el navegador:
@@ -145,6 +146,11 @@ Permite consultar y configurar el límite de gasto máximo (`maxBudgetUsd`) para
 Permite generar, listar y revocar claves de acceso propias del Gateway (`air_live_<32_hex>`) por usuario:
 * Al crear una clave (`POST /api/v1/router/keys`), el token en texto plano (`rawApiKey`) se muestra **una única vez** y en la base de datos solo se persiste su prefijo enmascarado (`air_live_9f8e...`) y su resumen criptográfico **SHA-256** (`keyHash`).
 * Si se intenta enrutar un prompt (`POST /api/v1/router/prompt`) con una clave `air_live_...` inexistente o revocada (`DELETE /api/v1/router/keys/{keyId}`), el Gateway rechaza la petición con **HTTP `401 Unauthorized`**.
+
+### 6. Billetera Prepago y Pasarela de Recarga (`GET /api/v1/router/wallet/{userId}` y `POST /api/v1/router/wallet/{userId}/topup`)
+Permite gestionar el saldo prepago de créditos de tokens por usuario:
+* Al realizar una recarga (`POST /api/v1/router/wallet/{userId}/topup` con `amountUsd > 0` y `paymentMethod`: `"STRIPE_CARD"` o `"PAYPAL"`), se abona el saldo y se activa el modo prepago (`walletEnforced = true`).
+* Cada petición con coste descuenta en tiempo real los micro-céntimos consumidos de `balanceUsd` (las peticiones con **`Caché Hit (0 €)`** descuentan `0,000000 €`). Cuando el saldo prepago llega a `0`, nuevas peticiones con coste se bloquean con **HTTP `402 Payment Required`** hasta la siguiente recarga.
 
 ---
 

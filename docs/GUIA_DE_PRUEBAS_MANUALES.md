@@ -141,3 +141,13 @@ Abre tu navegador en: 👉 **`http://localhost:5173`**
   * Con esa misma clave aún puesta en el campo `X-API-Key` del simulador, vuelve a pulsar **`Ejecutar enrutamiento`**.
   * **Resultado esperado:** El Gateway rechaza la petición y muestra la alerta roja **`Clave API Inválida o Revocada (HTTP 401 Unauthorized)`**.
   * Limpia el campo `X-API-Key` para seguir operando normalmente.
+
+---
+
+### 11. Billetera Prepago y Pasarela de Pagos (`WalletBillingCard` — Stripe / PayPal)
+- [ ] **11.1. Recargar créditos con Stripe o PayPal:**
+  * En el panel **"Billetera Prepago (Billing)"**, selecciona el método **`PayPal`** (o deja **`Tarjeta (Stripe)`**) y pulsa el botón rápido **`Micro (+0,000050 €)`** (o escribe `5` y pulsa **`Recargar Créditos`**).
+  * Comprueba que el badge superior cambia a **`Prepago Activo (Con Saldo)`**, el **Saldo Disponible** muestra el importe abonado y el **Último Método de Pago** refleja la pasarela elegida.
+- [ ] **11.2. Comprobar descuento de micro-céntimos en tiempo real:**
+  * Envía un prompt nuevo en el simulador inferior.
+  * Observa cómo el **Saldo Disponible** de la billetera se reduce automáticamente en los micro-céntimos exactos que ha costado esa petición (y comprueba que si envías el mismo prompt repetido con **`Caché Hit (0 €)`**, el saldo de tu billetera no baja).

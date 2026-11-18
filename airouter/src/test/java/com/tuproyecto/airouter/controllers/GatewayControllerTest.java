@@ -20,6 +20,7 @@ import com.tuproyecto.airouter.models.dto.RouterResponse;
 import com.tuproyecto.airouter.repositories.ApiKeyRepository;
 import com.tuproyecto.airouter.repositories.RequestLogRepository;
 import com.tuproyecto.airouter.repositories.UserBudgetRepository;
+import com.tuproyecto.airouter.repositories.UserWalletRepository;
 import com.tuproyecto.airouter.services.RouterService;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -76,12 +77,18 @@ class GatewayControllerTest {
     private ApiKeyRepository apiKeyRepository;
 
     /**
+     * Repositorio JPA de billeteras prepago utilizado para limpiar el estado antes de cada prueba.
+     */
+    @Autowired
+    private UserWalletRepository userWalletRepository;
+
+    /**
      * Cliente de pruebas MVC para simular peticiones HTTP contra el controlador.
      */
     private MockMvc mockMvc;
 
     /**
-     * Inicializa {@link MockMvc} y vacía las tablas {@code request_logs}, {@code user_budgets} y {@code api_keys} antes de cada test.
+     * Inicializa {@link MockMvc} y vacía las tablas {@code request_logs}, {@code user_budgets}, {@code api_keys} y {@code user_wallets} antes de cada test.
      */
     @BeforeEach
     void setUp() {
@@ -89,6 +96,7 @@ class GatewayControllerTest {
         this.requestLogRepository.deleteAll();
         this.userBudgetRepository.deleteAll();
         this.apiKeyRepository.deleteAll();
+        this.userWalletRepository.deleteAll();
     }
 
     /**
@@ -575,6 +583,81 @@ class GatewayControllerTest {
                         .content(promptPayload))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.message", containsString("inválida o ha sido revocada")))
+                .andExpect(jsonPath("$.timestamp", notNullValue()));
+    }
+
+    /**
+     * Verifica de extremo a extremo el ciclo de la Billetera Prepago ({@code Token Credits Wallet}):
+     * <ol>
+     *   <li>{@code GET /api/v1/router/wallet/{userId}} devuelve inicialmente {@code POSTPAID_UNLIMITED}.</li>
+     *   <li>{@code POST /api/v1/router/wallet/{userId}/topup} recarga micro-saldo pasando a {@code PREPAID_ACTIVE}.</li>
+     *   <li>{@code POST /api/v1/router/prompt} consume el micro-saldo hasta agotarlo ({@code PREPAID_DEPLETED}).</li>
+     *   <li>El siguiente {@code POST /api/v1/router/prompt} con un prompt nuevo es bloqueado con {@code 402 Payment Required}.</li>
+     * </ol>
+     *
+     * @throws Exception si ocurre un error durante las peticiones simuladas
+     */
+    @Test
+    @DisplayName("Ciclo E2E Billetera Prepago: Consultar (POSTPAID_UNLIMITED), Recargar (PREPAID_ACTIVE), Consumir saldo y Rechazar con 402 Payment Required al agotarse")
+    void shouldManageWalletTopUpDeductBalanceAndReturn402WhenDepleted() throws Exception {
+        // 1. Consulta inicial -> POSTPAID_UNLIMITED
+        mockMvc.perform(get("/api/v1/router/wallet/wallet-e2e-user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId", is("wallet-e2e-user")))
+                .andExpect(jsonPath("$.walletEnforced", is(false)))
+                .andExpect(jsonPath("$.status", is(RouterService.WALLET_STATUS_POSTPAID)));
+
+        // 2. Recargar micro-saldo de $0.000001 USD con STRIPE_CARD -> PREPAID_ACTIVE
+        String topUpPayload = """
+                {
+                    "amountUsd": 0.000001,
+                    "paymentMethod": "STRIPE_CARD"
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/router/wallet/wallet-e2e-user/topup")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(topUpPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId", is("wallet-e2e-user")))
+                .andExpect(jsonPath("$.balanceUsd", is(0.000001)))
+                .andExpect(jsonPath("$.totalToppedUpUsd", is(0.000001)))
+                .andExpect(jsonPath("$.walletEnforced", is(true)))
+                .andExpect(jsonPath("$.lastPaymentMethod", is("STRIPE_CARD")))
+                .andExpect(jsonPath("$.status", is(RouterService.WALLET_STATUS_ACTIVE)));
+
+        // 3. Enviar primer prompt complejo (consume >= $0.000001 USD y deja balanceUsd en 0.000000) -> 200 OK
+        String firstPromptPayload = """
+                {
+                    "userId": "wallet-e2e-user",
+                    "prompt": "Analizar arquitectura prepago"
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/router/prompt")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(firstPromptPayload))
+                .andExpect(status().isOk());
+
+        // Verificar que la billetera ha quedado en estado PREPAID_DEPLETED (balanceUsd = 0)
+        mockMvc.perform(get("/api/v1/router/wallet/wallet-e2e-user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.balanceUsd", is(0.0)))
+                .andExpect(jsonPath("$.status", is(RouterService.WALLET_STATUS_DEPLETED)));
+
+        // 4. Enviar un segundo prompt nuevo con saldo agotado -> 402 Payment Required
+        String secondPromptPayload = """
+                {
+                    "userId": "wallet-e2e-user",
+                    "prompt": "Segundo prompt distinto sin saldo prepago"
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/router/prompt")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(secondPromptPayload))
+                .andExpect(status().isPaymentRequired())
+                .andExpect(jsonPath("$.message", containsString("Saldo prepago agotado")))
                 .andExpect(jsonPath("$.timestamp", notNullValue()));
     }
 }

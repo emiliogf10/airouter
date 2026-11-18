@@ -8,6 +8,8 @@ import com.tuproyecto.airouter.models.dto.RouterResponse;
 import com.tuproyecto.airouter.models.dto.RouterStatsResponse;
 import com.tuproyecto.airouter.models.dto.UserBudgetRequest;
 import com.tuproyecto.airouter.models.dto.UserBudgetResponse;
+import com.tuproyecto.airouter.models.dto.UserWalletResponse;
+import com.tuproyecto.airouter.models.dto.WalletTopUpRequest;
 import com.tuproyecto.airouter.services.RouterService;
 import java.util.List;
 import java.util.UUID;
@@ -175,5 +177,33 @@ public class GatewayController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void revokeApiKey(@PathVariable UUID keyId) {
         routerService.revokeApiKey(keyId);
+    }
+
+    /**
+     * Consulta el estado financiero actual de la Billetera Prepago ({@code Token Credits Wallet}) de un usuario.
+     *
+     * @param userId identificador del usuario titular de la billetera
+     * @return DTO {@link UserWalletResponse} con el saldo disponible, total recargado y estado operativo
+     */
+    @GetMapping("/wallet/{userId}")
+    @ResponseStatus(HttpStatus.OK)
+    public UserWalletResponse getUserWallet(@PathVariable String userId) {
+        return routerService.getUserWallet(userId);
+    }
+
+    /**
+     * Procesa una recarga de créditos prepago en la billetera de un usuario y activa el control
+     * estricto de saldo ({@code walletEnforced = true}).
+     *
+     * @param userId  identificador del usuario titular de la billetera
+     * @param request DTO con el importe en USD a abonar y el método de pago ({@code STRIPE_CARD} o {@code PAYPAL})
+     * @return DTO {@link UserWalletResponse} con el saldo actualizado
+     */
+    @PostMapping("/wallet/{userId}/topup")
+    @ResponseStatus(HttpStatus.OK)
+    public UserWalletResponse topUpUserWallet(
+            @PathVariable String userId,
+            @RequestBody(required = false) WalletTopUpRequest request) {
+        return routerService.topUpUserWallet(userId, request);
     }
 }
