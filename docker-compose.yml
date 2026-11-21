@@ -1,0 +1,80 @@
+# =============================================================================
+# Orquestación Full-Stack — AI Cost Router (PostgreSQL 17 + Spring Boot + Nginx)
+# =============================================================================
+# Levanta la arquitectura completa aislada en la red interna `airouter-net`:
+#   1. postgres : Base de datos relacional PostgreSQL 17 con volumen persistente.
+#   2. backend  : API REST Spring Boot 4.1.1 (Java 21) con perfil `prod` y Flyway.
+#   3. frontend : Dashboard React 19 servido por Nginx 1.27 con proxy hacia /api/.
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # 1. Base de Datos Relacional: PostgreSQL 17 Alpine
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    container_name: airouter-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-airouterdb}
+      POSTGRES_USER: ${POSTGRES_USER:-airouter_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airouter_secret_pwd}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - airouter-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-airouter_user} -d $${POSTGRES_DB:-airouterdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # 2. Backend API Gateway: Spring Boot 4.1.1 (Java 21) + Flyway PostgreSQL
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./airouter
+      dockerfile: Dockerfile
+    container_name: airouter-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-airouterdb}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-airouter_user}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-airouter_secret_pwd}
+      AIROUTER_RATE_LIMIT_RPM: ${AIROUTER_RATE_LIMIT_RPM:-20}
+      AIROUTER_CORS_ALLOWED_ORIGINS: ${AIROUTER_CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:80}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    ports:
+      - "8080:8080"
+    networks:
+      - airouter-net
+
+  # ---------------------------------------------------------------------------
+  # 3. Frontend Dashboard: React 19 + Nginx 1.27 (Reverse Proxy)
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: airouter-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+    networks:
+      - airouter-net
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  airouter-net:
+    driver: bridge
