@@ -48,6 +48,21 @@ updates:
       - "dependencies"
       - "frontend"
       - "security"
+    # Agrupar vite y sus plugins para evitar conflictos de peerDependencies (ERESOLVE)
+    groups:
+      vite-ecosystem:
+        patterns:
+          - "vite"
+          - "@vitejs/*"
+          - "vitest"
+          - "@testing-library/*"
+    # Ignorar saltos de versión mayor (Major Breaking Changes) aislados en vite y vitest
+    # que rompen peerDependencies con @vitejs/plugin-react y los tipos de @testing-library/jest-dom
+    ignore:
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "vitest"
+        update-types: ["version-update:semver-major"]
 
   # ----------------------------------------------------------------------------
   # 3. Ecosistema CI/CD: GitHub Actions (Workflows en /.github/workflows)
