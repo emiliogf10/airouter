@@ -18,7 +18,7 @@ El proyecto es un **AI Cost Router** (API Gateway en Java 21 y Spring Boot 3) qu
 
 Zonas compartidas: Si hay que crear una entidad nueva en base de datos, `05-arquitecto-datos` diseña el SQL de migración y `01-backend-java` crea la clase `@Entity` en Java. 
 
-> ⚠️ **Documentos Centrales:** Antes de planificar nada, debes leer obligatoriamente `GEMINI.md` (reglas globales y arquitectura) y `PLAN_DE_ACCION.md` (estado de las tareas, ubicado en la raíz del repositorio). Eres responsable de proponer actualizaciones para ambos archivos cuando cambie la arquitectura o se completen tareas. Ten en cuenta además que el proyecto Maven de Spring Boot reside en la subcarpeta `airouter/`.
+> ⚠️ **Documentos Centrales y Grafo (`graphify`):** Antes de planificar nada, debes leer obligatoriamente `GEMINI.md` (reglas globales y arquitectura), `PLAN_DE_ACCION.md` (estado de las tareas, ubicado en la raíz del repositorio) y apoyarte en el grafo de conocimiento `graphify-out/` (`GRAPH_REPORT.md` / `graph.json` mediante `python -m graphify query "<consulta>"`). Cuando delegues en cualquier subagente (`01` a `05`), indícales que utilicen el grafo en `graphify-out/` para consultar dependencias y que tras modificar código ejecuten `python -m graphify update .`. Eres responsable de proponer actualizaciones para ambos archivos cuando cambie la arquitectura o se completen tareas. Ten en cuenta además que el proyecto Maven de Spring Boot reside en la subcarpeta `airouter/`.
 
 ## Cómo trabajas (Flujo de Ejecución)
 

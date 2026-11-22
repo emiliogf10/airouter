@@ -153,3 +153,16 @@ Abre tu navegador en: 👉 **`http://localhost:5173`**
 - [ ] **11.2. Comprobar descuento de micro-céntimos en tiempo real:**
   * Envía un prompt nuevo en el simulador inferior.
   * Observa cómo el **Saldo Disponible** de la billetera se reduce automáticamente en los micro-céntimos exactos que ha costado esa petición (y comprueba que si envías el mismo prompt repetido con **`Caché Hit (0 €)`**, el saldo de tu billetera no baja).
+
+---
+
+### 12. Escudo DLP de Privacidad (*PII / Secret Redaction*) y Telemetría de Latencia (`latencyMs`)
+- [ ] **12.1. Probar enmascaramiento automático de PII y secretos:**
+  * En el simulador, escribe un prompt que incluya datos sensibles reales o ficticios, por ejemplo:
+    ```text
+    Mi correo es juan.perez@empresa.es, mi DNI es 12345678Z, mi teléfono es +34 600 123 456 y mi clave es AIzaSySecretKeyTest1234567890.
+    ```
+  * Pulsa **`Evaluar y Enrutar Prompt`**.
+- [ ] **12.2. Resultado esperado:**
+  * En la tarjeta de resultado aparecen los nuevos badges **`DLP: 4 datos protegidos`** (en color ámbar) y el tiempo de respuesta en milisegundos (**`X ms`**).
+  * En la tabla inferior **"Historial de Peticiones Recientes"** y al abrir **`Ver detalle`** (`LogInspectorDrawer`), comprueba que el texto guardado y enviado al LLM ya está completamente anonimizado (`[EMAIL_REDACTED]`, `[ID_REDACTED]`, `[PHONE_REDACTED]`, `[SECRET_REDACTED]`) y que en las tarjetas KPI superiores se actualizan los badges **`~X ms`** y **`DLP: X protegidos`**.

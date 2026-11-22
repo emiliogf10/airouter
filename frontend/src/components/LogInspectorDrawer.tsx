@@ -8,6 +8,7 @@ import {
   FileText,
   Hash,
   PiggyBank,
+  ShieldCheck,
   Sparkles,
   User,
   X,
@@ -426,6 +427,36 @@ export const LogInspectorDrawer: React.FC<LogInspectorDrawerProps> = ({
                   className="text-base font-bold font-mono text-emerald-400 mt-1"
                 >
                   {formatCurrency(savedCostUsd, currency)}
+                </p>
+              </div>
+
+              {/* Latencia de Inferencia */}
+              <div className="p-3.5 rounded-xl bg-zinc-950/70 border border-white/10">
+                <span className="text-[11px] font-medium text-zinc-400 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-indigo-400" aria-hidden="true" />
+                  Latencia de Inferencia
+                </span>
+                <p
+                  data-testid="inspector-latency"
+                  className="text-base font-bold font-mono text-zinc-100 mt-1"
+                >
+                  {log.latencyMs ?? 0} ms
+                </p>
+              </div>
+
+              {/* Escudo DLP de Privacidad */}
+              <div className="p-3.5 rounded-xl bg-zinc-950/70 border border-white/10 sm:col-span-2">
+                <span className="text-[11px] font-medium text-amber-400 flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
+                  Escudo DLP de Privacidad
+                </span>
+                <p
+                  data-testid="inspector-dlp-status"
+                  className="text-sm font-semibold text-zinc-100 mt-1"
+                >
+                  {(log.redactedItemsCount ?? 0) > 0
+                    ? `${log.redactedItemsCount} elementos PII/secretos anonimizados`
+                    : 'Sin datos sensibles detectados'}
                 </p>
               </div>
             </div>

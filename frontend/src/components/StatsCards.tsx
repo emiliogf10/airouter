@@ -50,6 +50,14 @@ export const StatsCards: React.FC<StatsCardsProps> = ({
         accent="indigo"
         isLoading={showSkeleton}
         testId="kpi-total-requests"
+        badge={
+          <span
+            data-testid="kpi-avg-latency-badge"
+            className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-mono font-medium bg-indigo-500/10 text-indigo-300 border border-indigo-500/20"
+          >
+            ~{(stats.averageLatencyMs ?? 0).toFixed(0)} ms
+          </span>
+        }
         footer={
           <div className="flex items-center justify-between text-xs">
             <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
@@ -72,6 +80,14 @@ export const StatsCards: React.FC<StatsCardsProps> = ({
         accent="zinc"
         isLoading={showSkeleton}
         testId="kpi-total-tokens"
+        badge={
+          <span
+            data-testid="kpi-dlp-redacted-badge"
+            className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-300 border border-amber-500/20"
+          >
+            DLP: {stats.totalRedactedItems ?? 0} protegidos
+          </span>
+        }
         footer={
           <div className="flex items-center justify-between text-xs text-zinc-400">
             <span>Flash: {stats.fastModelTokens.toLocaleString('es-ES')} tok.</span>

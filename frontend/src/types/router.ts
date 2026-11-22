@@ -163,6 +163,10 @@ export interface RouterResponse {
   createdAt: string;
   /** Indica si la petición fue resuelta mediante la Caché Semántica de Prompts a coste cero (`true`) o evaluada de nuevo (`false`). */
   cacheHit?: boolean;
+  /** Tiempo de respuesta extremo a extremo de la petición en milisegundos. */
+  latencyMs?: number;
+  /** Cantidad de elementos sensibles (PII o secretos) anonimizados por el Escudo DLP antes del enrutamiento. */
+  redactedItemsCount?: number;
 }
 
 /**
@@ -192,6 +196,10 @@ export interface RouterStatsResponse {
   savingsPercentage: number;
   /** Cantidad total de peticiones servidas directamente desde la Caché Semántica a coste cero (`$0.000000`). */
   cacheHits?: number;
+  /** Latencia media extremo a extremo en milisegundos de todas las peticiones procesadas. */
+  averageLatencyMs?: number;
+  /** Total acumulado de elementos sensibles (PII/secretos) anonimizados por el Escudo DLP. */
+  totalRedactedItems?: number;
 }
 
 /**

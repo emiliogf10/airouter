@@ -68,6 +68,7 @@ El esquema de base de datos está gobernado exclusivamente por **Flyway** median
 * **`V3__add_cache_hit_to_request_logs.sql`**: Añade la columna `cache_hit` (`BOOLEAN NOT NULL DEFAULT FALSE`) y el índice `idx_request_logs_cache_hit` a `request_logs` para la **Caché Semántica de Coste Cero (*Zero-Cost Cache*)**.
 * **`V4__create_api_keys_table.sql`**: Crea la tabla `api_keys` (`id`, `user_id`, `key_name`, `key_prefix`, `key_hash` SHA-256 único, `active`, `created_at`) para la gestión criptográfica de claves API por usuario sin almacenar secretos en texto plano.
 * **`V5__create_user_wallets_table.sql`**: Crea la tabla `user_wallets` (`id`, `user_id` único, `balance_usd`, `total_topped_up_usd`, `wallet_enforced`, `last_payment_method`, `updated_at`) para la **Billetera Prepago (*Token Credits Wallet*) y Pasarela de Pagos (`Billing`)**.
+* **`V6__add_latency_and_dlp_to_request_logs.sql`**: Añade a `request_logs` las columnas `latency_ms` (`BIGINT NOT NULL DEFAULT 0`) y `redacted_items_count` (`INTEGER NOT NULL DEFAULT 0`) para la **Telemetría de Latencia en Tiempo Real** y el **Escudo DLP de Privacidad (*PII / Secret Redaction*)**.
 
 ### Acceso a la Consola H2 (Desarrollo)
 Con el backend en ejecución, puedes inspeccionar la base de datos en memoria desde el navegador:
@@ -82,7 +83,7 @@ Con el backend en ejecución, puedes inspeccionar la base de datos en memoria de
 ## 🔌 Endpoints de la API REST (`/api/v1/router`)
 
 ### 1. Evaluar y Enrutar un Prompt (`POST /api/v1/router/prompt`)
-Analiza la complejidad del prompt, calcula los tokens estimados, decide el modelo óptimo en coste, persiste el registro en base de datos y ejecuta la petición en **Modo Híbrido de 3 niveles**:
+Analiza la complejidad del prompt, aplica el **Escudo DLP de Privacidad** (anonimizando automáticamente emails `[EMAIL_REDACTED]`, tarjetas bancarias `[CARD_REDACTED]`, teléfonos `[PHONE_REDACTED]`, DNI/NIE `[ID_REDACTED]` y claves secretas inline `[SECRET_REDACTED]` antes de salir del Gateway o persistirse), calcula los tokens estimados, decide el modelo óptimo en coste, mide la **latencia extremo a extremo en milisegundos (`latencyMs`)**, persiste el registro en base de datos y ejecuta la petición en **Modo Híbrido de 3 niveles**:
 1. **Nivel 1 — BYOK (*Bring Your Own Key* por usuario):** Si el cliente envía su clave de Google AI Studio (`AIzaSy...`) en la cabecera HTTP `X-API-Key`, el Backend invoca en tiempo real la API oficial de Google Gemini (`/v1beta/models/{model}:generateContent`) con la clave del usuario.
 2. **Nivel 2 — Clave Global del Servidor:** Si no se envía cabecera `X-API-Key`, pero existe la variable de entorno `GEMINI_API_KEY` (`airouter.gemini.api-key`) en el servidor, invoca la API oficial de Google Gemini con dicha clave.
 3. **Nivel 3 — Modo Simulación Resiliente (Sin coste):** Si no hay clave configurada (o si la llamada externa falla por red/autenticación), responde automáticamente con el motor de simulación sin interrumpir el servicio.

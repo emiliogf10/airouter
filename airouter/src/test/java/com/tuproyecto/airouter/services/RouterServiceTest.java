@@ -1218,4 +1218,112 @@ class RouterServiceTest {
                 "AIzaSyBobKey123"
         );
     }
+
+    /**
+     * Verifica que {@link RouterService#sanitizePromptPiiAndSecrets(String)} detecte y anonimice
+     * simultáneamente las 5 categorías del Escudo DLP de Privacidad:
+     * <ol>
+     *   <li>Correo electrónico ({@code [EMAIL_REDACTED]}).</li>
+     *   <li>Clave secreta de API ({@code [SECRET_REDACTED]}).</li>
+     *   <li>Tarjeta bancaria de 16 dígitos ({@code [CARD_REDACTED]}).</li>
+     *   <li>DNI español ({@code [ID_REDACTED]}).</li>
+     *   <li>Teléfono con prefijo internacional ({@code [PHONE_REDACTED]}).</li>
+     * </ol>
+     */
+    @Test
+    @DisplayName("Escudo DLP (Unitario): sanitizePromptPiiAndSecrets debe anonimizar email, secreto API, tarjeta, DNI y teléfono contabilizando 5 elementos")
+    void shouldSanitizeEmailSecretCardDniAndPhoneInPrompt() {
+        String rawSensitivePrompt = "Hola, mi email es cliente.vip@empresa.es, mi token es AIzaSyDlpSecretKey123456789, "
+                + "mi tarjeta es 4532 0151 1283 0366, mi DNI es 12345678Z y mi móvil es +34 600 123 456.";
+
+        RouterService.DlpSanitizationResult result = routerService.sanitizePromptPiiAndSecrets(rawSensitivePrompt);
+
+        assertEquals(5, result.redactedItemsCount());
+        assertTrue(result.sanitizedPrompt().contains(RouterService.DLP_EMAIL_REDACTED));
+        assertTrue(result.sanitizedPrompt().contains(RouterService.DLP_SECRET_REDACTED));
+        assertTrue(result.sanitizedPrompt().contains(RouterService.DLP_CARD_REDACTED));
+        assertTrue(result.sanitizedPrompt().contains(RouterService.DLP_ID_REDACTED));
+        assertTrue(result.sanitizedPrompt().contains(RouterService.DLP_PHONE_REDACTED));
+
+        assertFalse(result.sanitizedPrompt().contains("cliente.vip@empresa.es"));
+        assertFalse(result.sanitizedPrompt().contains("AIzaSyDlpSecretKey123456789"));
+        assertFalse(result.sanitizedPrompt().contains("4532 0151 1283 0366"));
+        assertFalse(result.sanitizedPrompt().contains("12345678Z"));
+        assertFalse(result.sanitizedPrompt().contains("600 123 456"));
+    }
+
+    /**
+     * Verifica que {@link RouterService#routePrompt(PromptRequest)} persista en {@link RequestLog}
+     * el prompt ya sanitizado por el Escudo DLP (sin almacenar PII ni secretos en texto plano),
+     * registre una latencia {@code latencyMs >= 1L} y propague {@code redactedItemsCount} en {@link RouterResponse}.
+     */
+    @Test
+    @DisplayName("Escudo DLP y Latencia en routePrompt: Debe persistir el prompt ya sanitizado, latencyMs >= 1L y redactedItemsCount en RouterResponse")
+    void shouldPersistSanitizedPromptLatencyAndRedactedCountOnRoutePrompt() {
+        ArgumentCaptor<RequestLog> logCaptor = ArgumentCaptor.forClass(RequestLog.class);
+        when(requestLogRepository.save(logCaptor.capture())).thenAnswer(invocation -> {
+            RequestLog arg = invocation.getArgument(0);
+            arg.setId(UUID.randomUUID());
+            arg.setCreatedAt(LocalDateTime.now());
+            return arg;
+        });
+
+        RouterResponse response = routerService.routePrompt(
+                new PromptRequest("dlp-route-user", "Enviar factura a admin@corp.com usando clave sk-proj1234567890abcdef")
+        );
+
+        assertEquals(2, response.redactedItemsCount());
+        assertTrue(response.latencyMs() >= 1L, "La latencia registrada debe ser al menos 1 ms");
+        assertTrue(response.promptContent().contains(RouterService.DLP_EMAIL_REDACTED));
+        assertTrue(response.promptContent().contains(RouterService.DLP_SECRET_REDACTED));
+        assertFalse(response.promptContent().contains("admin@corp.com"));
+        assertFalse(response.promptContent().contains("sk-proj1234567890abcdef"));
+
+        RequestLog savedLog = logCaptor.getValue();
+        assertEquals(2, savedLog.getRedactedItemsCount());
+        assertTrue(savedLog.getLatencyMs() >= 1L);
+        assertFalse(savedLog.getPromptContent().contains("admin@corp.com"));
+    }
+
+    /**
+     * Verifica que {@link RouterService#getStats(String)} calcule con exactitud la latencia media
+     * ({@code averageLatencyMs}) y el total acumulado de elementos sensibles protegidos por el Escudo DLP
+     * ({@code totalRedactedItems}).
+     */
+    @Test
+    @DisplayName("Telemetría en getStats: Debe calcular averageLatencyMs y totalRedactedItems a partir del historial de peticiones")
+    void shouldCalculateAverageLatencyMsAndTotalRedactedItemsInGetStats() {
+        RequestLog log1 = RequestLog.builder()
+                .id(UUID.randomUUID())
+                .userId("telemetry-user")
+                .promptContent("Consulta 1 con [EMAIL_REDACTED]")
+                .modelRouted(RouterService.MODEL_FAST)
+                .tokensEstimated(10)
+                .createdAt(LocalDateTime.now().minusMinutes(3))
+                .cacheHit(false)
+                .latencyMs(10L)
+                .redactedItemsCount(1)
+                .build();
+
+        RequestLog log2 = RequestLog.builder()
+                .id(UUID.randomUUID())
+                .userId("telemetry-user")
+                .promptContent("Consulta 2 con [SECRET_REDACTED] y [PHONE_REDACTED]")
+                .modelRouted(RouterService.MODEL_PRO)
+                .tokensEstimated(30)
+                .createdAt(LocalDateTime.now().minusMinutes(1))
+                .cacheHit(false)
+                .latencyMs(25L)
+                .redactedItemsCount(2)
+                .build();
+
+        when(requestLogRepository.findByUserIdOrderByCreatedAtDesc("telemetry-user"))
+                .thenReturn(List.of(log2, log1));
+
+        RouterStatsResponse stats = routerService.getStats("telemetry-user");
+
+        assertEquals(2L, stats.totalRequests());
+        assertEquals(17.5, stats.averageLatencyMs());
+        assertEquals(3L, stats.totalRedactedItems());
+    }
 }

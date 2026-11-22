@@ -82,8 +82,24 @@ public class RequestLog {
     private Boolean cacheHit = Boolean.FALSE;
 
     /**
-     * Constructor de compatibilidad sin el indicador explícito de acierto de caché,
-     * inicializando {@code cacheHit} en {@code false}.
+     * Tiempo de respuesta extremo a extremo de la petición procesada por el Gateway,
+     * expresado en milisegundos.
+     */
+    @Builder.Default
+    @Column(name = "latency_ms", nullable = false)
+    private Long latencyMs = 0L;
+
+    /**
+     * Cantidad de elementos sensibles (PII o secretos como emails, tarjetas, teléfonos,
+     * DNI/NIF o claves API) detectados y anonimizados por el Escudo DLP de Privacidad.
+     */
+    @Builder.Default
+    @Column(name = "redacted_items_count", nullable = false)
+    private Integer redactedItemsCount = 0;
+
+    /**
+     * Constructor de compatibilidad de 6 argumentos sin el indicador explícito de acierto
+     * de caché ni métricas de latencia/DLP, inicializándolos en sus valores por defecto.
      *
      * @param id identificador único del registro
      * @param userId identificador del usuario
@@ -99,13 +115,36 @@ public class RequestLog {
             String modelRouted,
             Integer tokensEstimated,
             LocalDateTime createdAt) {
-        this(id, userId, promptContent, modelRouted, tokensEstimated, createdAt, Boolean.FALSE);
+        this(id, userId, promptContent, modelRouted, tokensEstimated, createdAt, Boolean.FALSE, 0L, 0);
     }
 
     /**
-     * Asigna automáticamente la fecha y hora de creación y el valor por defecto de
-     * {@code cacheHit} antes de insertar el registro en la base de datos si no se
-     * han especificado previamente.
+     * Constructor de compatibilidad de 7 argumentos sin métricas explícitas de latencia ni DLP,
+     * inicializando {@code latencyMs} en {@code 0L} y {@code redactedItemsCount} en {@code 0}.
+     *
+     * @param id identificador único del registro
+     * @param userId identificador del usuario
+     * @param promptContent contenido íntegro del prompt
+     * @param modelRouted modelo al que se enrutó la petición
+     * @param tokensEstimated cantidad estimada de tokens
+     * @param createdAt fecha y hora de creación
+     * @param cacheHit indicador de acierto en la Caché Semántica
+     */
+    public RequestLog(
+            UUID id,
+            String userId,
+            String promptContent,
+            String modelRouted,
+            Integer tokensEstimated,
+            LocalDateTime createdAt,
+            Boolean cacheHit) {
+        this(id, userId, promptContent, modelRouted, tokensEstimated, createdAt, cacheHit, 0L, 0);
+    }
+
+    /**
+     * Asigna automáticamente la fecha y hora de creación y los valores por defecto de
+     * {@code cacheHit}, {@code latencyMs} y {@code redactedItemsCount} antes de insertar
+     * el registro en la base de datos si no se han especificado previamente.
      */
     @PrePersist
     protected void onCreate() {
@@ -114,6 +153,12 @@ public class RequestLog {
         }
         if (this.cacheHit == null) {
             this.cacheHit = Boolean.FALSE;
+        }
+        if (this.latencyMs == null) {
+            this.latencyMs = 0L;
+        }
+        if (this.redactedItemsCount == null) {
+            this.redactedItemsCount = 0;
         }
     }
 

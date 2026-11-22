@@ -2,10 +2,12 @@ import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  Clock,
   Cpu,
   Database,
   KeyRound,
   Send,
+  ShieldCheck,
   Sparkles,
   Terminal,
   User,
@@ -333,6 +335,16 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
               Enrutamiento Completado
             </span>
             <div className="flex flex-wrap items-center gap-2">
+              {(lastResult.redactedItemsCount ?? 0) > 0 && (
+                <span
+                  data-testid="routed-dlp-badge"
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                >
+                  <ShieldCheck className="w-3 h-3" aria-hidden="true" />
+                  DLP: {lastResult.redactedItemsCount}{' '}
+                  {lastResult.redactedItemsCount === 1 ? 'dato protegido' : 'datos protegidos'}
+                </span>
+              )}
               {lastResult.cacheHit && (
                 <span
                   data-testid="routed-cache-hit-badge"
@@ -373,6 +385,13 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
                 className="text-xs font-mono px-2 py-0.5 rounded bg-zinc-800/90 text-zinc-300 border border-white/5"
               >
                 {lastResult.tokensEstimated} tokens
+              </span>
+              <span
+                data-testid="routed-latency-badge"
+                className="inline-flex items-center gap-1 text-xs font-mono px-2 py-0.5 rounded bg-zinc-800/90 text-zinc-300 border border-white/5"
+              >
+                <Clock className="w-3 h-3 text-zinc-400" aria-hidden="true" />
+                {lastResult.latencyMs ?? 1} ms
               </span>
             </div>
           </div>

@@ -16,3 +16,7 @@ Eres el especialista en calidad y pruebas del AI Cost Router. El código real ma
 ```bash
 ./mvnw clean test                # Suite completa (Usa H2 en memoria por defecto)
 ./mvnw test -Dtest=NombreTest    # Una sola clase
+```
+
+## Uso del Grafo de Conocimiento (`graphify`)
+Antes de diseñar nuevas pruebas o auditar el impacto de un cambio, consulta `graphify-out/GRAPH_REPORT.md` o ejecuta desde la raíz `python -m graphify query "<clase o flujo a testear>"` y `python -m graphify path "<Test>" "<Servicio>"` para identificar todas las ramas, métodos conectados y *God Nodes* afectados. Tras añadir nuevos tests, ejecuta `python -m graphify update .` desde la raíz.

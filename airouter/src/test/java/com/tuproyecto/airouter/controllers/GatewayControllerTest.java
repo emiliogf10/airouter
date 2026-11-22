@@ -1,6 +1,7 @@
 package com.tuproyecto.airouter.controllers;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
@@ -659,5 +660,41 @@ class GatewayControllerTest {
                 .andExpect(status().isPaymentRequired())
                 .andExpect(jsonPath("$.message", containsString("Saldo prepago agotado")))
                 .andExpect(jsonPath("$.timestamp", notNullValue()));
+    }
+
+    /**
+     * Verifica de extremo a extremo el Escudo DLP de Privacidad y la Telemetría de Latencia en
+     * {@code POST /api/v1/router/prompt} y {@code GET /api/v1/router/stats}:
+     * al enviar un prompt con un email y una clave secreta inline, la respuesta JSON devuelve el prompt
+     * anonimizado ({@code [EMAIL_REDACTED]} y {@code [SECRET_REDACTED]}), {@code redactedItemsCount: 2}
+     * y {@code latencyMs >= 1}, reflejando dichas métricas en {@code /stats}.
+     *
+     * @throws Exception si ocurre un error durante las peticiones simuladas
+     */
+    @Test
+    @DisplayName("Escudo DLP y Latencia E2E: POST /prompt debe anonimizar PII/secretos, devolver redactedItemsCount=2 y latencyMs>=1, y actualizar /stats")
+    void shouldSanitizePiiAndReturnDlpAndLatencyMetricsInPromptAndStatsEndpoints() throws Exception {
+        String sensitivePayload = """
+                {
+                    "userId": "dlp-e2e-user",
+                    "prompt": "Por favor contacta a soporte@empresa.com con la clave AIzaSyInlineSecretKey987654321"
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/router/prompt")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(sensitivePayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId", is("dlp-e2e-user")))
+                .andExpect(jsonPath("$.promptContent", containsString(RouterService.DLP_EMAIL_REDACTED)))
+                .andExpect(jsonPath("$.promptContent", containsString(RouterService.DLP_SECRET_REDACTED)))
+                .andExpect(jsonPath("$.redactedItemsCount", is(2)))
+                .andExpect(jsonPath("$.latencyMs", greaterThanOrEqualTo(1)));
+
+        mockMvc.perform(get("/api/v1/router/stats").param("userId", "dlp-e2e-user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalRequests", is(1)))
+                .andExpect(jsonPath("$.totalRedactedItems", is(2)))
+                .andExpect(jsonPath("$.averageLatencyMs", greaterThanOrEqualTo(1.0)));
     }
 }

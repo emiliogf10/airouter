@@ -8,6 +8,7 @@ Eres el especialista en base de datos y persistencia (Spring Data JPA, PostgreSQ
 - **Hibernate solo valida:** Usamos `spring.jpa.hibernate.ddl-auto=validate` (o `none`). Si una entidad de Java no coincide con el SQL de Flyway, la aplicación no debe arrancar.
 - **Inmutabilidad de Migraciones:** Jamás edites una migración ya aplicada (Flyway valida el *checksum* y fallará). Todo cambio requiere un archivo `V<N+1>__...sql` nuevo.
 - **Compatibilidad H2 / PostgreSQL:** Escribe SQL estándar. Los tests rápidos usan H2 en memoria, pero el entorno de producción usará PostgreSQL. Si necesitas características específicas de Postgres (como `JSONB` para guardar la respuesta cruda del LLM), avísalo para configurar los tests con Testcontainers.
+- **Uso del Grafo de Conocimiento (`graphify`):** Consulta `graphify-out/GRAPH_REPORT.md` o ejecuta `python -m graphify query "<tabla o entidad>"` desde la raíz para verificar qué repositorios, servicios y tests dependen de cada tabla Flyway (`V1`..`V6`) o entidad JPA antes de evolucionar el esquema, y actualiza el grafo con `python -m graphify update .` al terminar.
 
 ## Responsabilidades y Modelo
 

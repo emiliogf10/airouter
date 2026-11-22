@@ -6,6 +6,7 @@ import {
   Download,
   Eye,
   Inbox,
+  ShieldCheck,
   Sparkles,
   User,
   Zap,
@@ -225,6 +226,21 @@ export const RecentLogsTable: React.FC<RecentLogsTableProps> = ({
                             Caché Hit (0 €)
                           </span>
                         )}
+                        {(log.redactedItemsCount ?? 0) > 0 && (
+                          <span
+                            data-testid={`log-dlp-badge-${log.id}`}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                          >
+                            <ShieldCheck className="w-3 h-3" aria-hidden="true" />
+                            DLP ({log.redactedItemsCount})
+                          </span>
+                        )}
+                        <span
+                          data-testid={`log-latency-${log.id}`}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono bg-zinc-800/80 text-zinc-300 border border-white/10"
+                        >
+                          {log.latencyMs ?? 0} ms
+                        </span>
                       </div>
                     </td>
                     <td className="py-4 px-6 whitespace-nowrap text-right font-mono text-zinc-200">
