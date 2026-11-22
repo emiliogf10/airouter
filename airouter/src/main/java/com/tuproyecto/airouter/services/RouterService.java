@@ -472,11 +472,22 @@ public class RouterService {
         validateManagedClientApiKeyIfPresent(clientApiKey, normalizedUserId);
 
         DlpSanitizationResult dlpResult = sanitizePromptPiiAndSecrets(request.prompt());
-        String promptContent = dlpResult.sanitizedPrompt();
+        String sanitizedPrompt = dlpResult.sanitizedPrompt();
         int redactedItemsCount = dlpResult.redactedItemsCount();
         if (redactedItemsCount > 0) {
             log.info("Escudo DLP [PRIVACIDAD]: Se han anonimizado {} elementos sensibles en el prompt del usuario '{}'.",
                     redactedItemsCount, normalizedUserId);
+        }
+
+        PromptCompressionResult compressionResult = compressPromptAndSaveTokens(sanitizedPrompt);
+        String promptContent = compressionResult.compressedPrompt();
+        int tokensSavedCompression = compressionResult.tokensSaved();
+        if (tokensSavedCompression > 0) {
+            log.info("Compresor de Prompts [OPTIMIZACIÓN]: Se han ahorrado {} tokens adicionales ({} -> {} tokens) en el prompt del usuario '{}'.",
+                    tokensSavedCompression,
+                    compressionResult.tokensBeforeCompression(),
+                    compressionResult.tokensAfterCompression(),
+                    normalizedUserId);
         }
 
         int tokensEstimated = estimateTokens(promptContent);
@@ -518,7 +529,7 @@ public class RouterService {
             log.info("Enrutando petición del usuario '{}' [tokens estimados: {}] -> modelo seleccionado: {}",
                     normalizedUserId, tokensEstimated, selectedModel);
 
-            finalResponseText = resolveModelResponse(selectedModel, promptContent, tokensEstimated, clientApiKey);
+            finalResponseText = resolveModelResponse(selectedModel, promptContent, sanitizedPrompt, tokensEstimated, clientApiKey);
             boolean isSimulatedResponse = finalResponseText == null
                     || finalResponseText.startsWith("[Simulación AI Cost Router]");
             promptCache.put(
@@ -544,10 +555,57 @@ public class RouterService {
                 .cacheHit(isCacheHit)
                 .latencyMs(latencyMs)
                 .redactedItemsCount(redactedItemsCount)
+                .tokensSavedCompression(tokensSavedCompression)
                 .build();
 
         RequestLog savedEntity = requestLogRepository.save(entityToSave);
         return toRouterResponse(savedEntity, finalResponseText);
+    }
+
+    /**
+     * Comprime y optimiza un prompt eliminando espacios en blanco redundantes, bloques de líneas
+     * vacías repetidas y signos de puntuación duplicados innecesarios sin alterar el significado
+     * semántico, calculando cuántos tokens se han ahorrado respecto al texto de entrada.
+     *
+     * <p>Reglas de optimización aplicadas:</p>
+     * <ol>
+     *   <li>Normalización de saltos de línea ({@code \r\n} y {@code \r} a {@code \n}).</li>
+     *   <li>Colapso de espacios horizontales y tabulaciones repetidas ({@code [ \t]{2,}}) en un único espacio.</li>
+     *   <li>Eliminación de espacios en blanco previos a signos de puntuación ({@code [,.;:?!]}).</li>
+     *   <li>Eliminación de espacios al final/inicio de línea y colapso de 3+ saltos de línea consecutivos en máximo 2 ({@code \n\n}).</li>
+     *   <li>Compactación de signos de interrogación o exclamación repetidos excesivamente ({@code ([?!]){3,}} a {@code $1}).</li>
+     *   <li>Recorte de espacios laterales ({@code trim()}).</li>
+     * </ol>
+     *
+     * @param prompt texto del prompt (previamente sanitizado por DLP)
+     * @return {@link PromptCompressionResult} con el texto optimizado, tokens previos, tokens finales y ahorro neto
+     */
+    public PromptCompressionResult compressPromptAndSaveTokens(String prompt) {
+        if (prompt == null || prompt.isBlank()) {
+            return new PromptCompressionResult(prompt != null ? prompt : "", 0, 0, 0);
+        }
+
+        int tokensBefore = Math.max(1, (int) Math.ceil(prompt.length() / CHARS_PER_TOKEN));
+
+        String compressed = prompt
+                .replace("\r\n", "\n")
+                .replace("\r", "\n")
+                .replaceAll("[ \\t]{2,}", " ")
+                .replaceAll("[ \\t]+([,.;:?!])", "$1")
+                .replaceAll("[ \\t]+\\n", "\n")
+                .replaceAll("\\n[ \\t]+", "\n")
+                .replaceAll("\\n{3,}", "\n\n")
+                .replaceAll("([?!]){3,}", "$1")
+                .trim();
+
+        if (compressed.isEmpty()) {
+            compressed = prompt.trim();
+        }
+
+        int tokensAfter = estimateTokens(compressed);
+        int tokensSaved = Math.max(0, tokensBefore - tokensAfter);
+
+        return new PromptCompressionResult(compressed, tokensBefore, tokensAfter, tokensSaved);
     }
 
     /**
@@ -1460,25 +1518,49 @@ public class RouterService {
      * Obtiene la respuesta textual del modelo invocando Google Gemini si existe una clave activa
      * y el cliente HTTP está disponible, o generando la respuesta simulada de respaldo en caso contrario.
      *
-     * @param selectedModel   modelo LLM elegido por la heurística de costes
-     * @param promptContent   contenido del prompt del usuario
-     * @param tokensEstimated cantidad de tokens estimada
-     * @param clientApiKey    clave opcional enviada por el usuario
+     * @param selectedModel      modelo LLM elegido por la heurística de costes
+     * @param promptContent      contenido del prompt optimizado
+     * @param rawSanitizedPrompt contenido del prompt sanitizado previo a la compresión de espacios internos
+     * @param tokensEstimated    cantidad de tokens estimada
+     * @param clientApiKey       clave opcional enviada por el usuario
      * @return texto de respuesta real de Gemini o respuesta simulada de fallback
      */
     private String resolveModelResponse(
             String selectedModel,
             String promptContent,
+            String rawSanitizedPrompt,
             int tokensEstimated,
             String clientApiKey) {
         Optional<String> effectiveApiKey = resolveEffectiveApiKey(clientApiKey);
         if (effectiveApiKey.isPresent() && geminiRestClient != null) {
-            Optional<String> realResponse = geminiRestClient.generateContent(
-                    selectedModel,
-                    promptContent.trim(),
-                    effectiveApiKey.get()
-            );
-            if (realResponse.isPresent() && !realResponse.get().isBlank()) {
+            Optional<String> realResponse = Optional.empty();
+            try {
+                realResponse = geminiRestClient.generateContent(
+                        selectedModel,
+                        promptContent.trim(),
+                        effectiveApiKey.get()
+                );
+            } catch (RuntimeException ex) {
+                if (rawSanitizedPrompt != null && !promptContent.trim().equals(rawSanitizedPrompt.trim())) {
+                    realResponse = geminiRestClient.generateContent(
+                            selectedModel,
+                            rawSanitizedPrompt.trim(),
+                            effectiveApiKey.get()
+                    );
+                } else {
+                    throw ex;
+                }
+            }
+            if ((realResponse == null || realResponse.isEmpty())
+                    && rawSanitizedPrompt != null
+                    && !promptContent.trim().equals(rawSanitizedPrompt.trim())) {
+                realResponse = geminiRestClient.generateContent(
+                        selectedModel,
+                        rawSanitizedPrompt.trim(),
+                        effectiveApiKey.get()
+                );
+            }
+            if (realResponse != null && realResponse.isPresent() && !realResponse.get().isBlank()) {
                 return realResponse.get();
             }
         }
@@ -1530,6 +1612,7 @@ public class RouterService {
         long cacheHits = 0L;
         long totalLatencyMs = 0L;
         long totalRedactedItems = 0L;
+        long totalTokensSavedCompression = 0L;
 
         for (RequestLog logEntry : logs) {
             long tokens = logEntry.getTokensEstimated() != null ? logEntry.getTokensEstimated() : 0L;
@@ -1542,6 +1625,9 @@ public class RouterService {
             }
             if (logEntry.getRedactedItemsCount() != null && logEntry.getRedactedItemsCount() > 0) {
                 totalRedactedItems += logEntry.getRedactedItemsCount();
+            }
+            if (logEntry.getTokensSavedCompression() != null && logEntry.getTokensSavedCompression() > 0) {
+                totalTokensSavedCompression += logEntry.getTokensSavedCompression();
             }
 
             if (MODEL_FAST.equals(logEntry.getModelRouted())) {
@@ -1607,7 +1693,8 @@ public class RouterService {
                 savingsPercentage,
                 cacheHits,
                 averageLatencyMs,
-                totalRedactedItems
+                totalRedactedItems,
+                totalTokensSavedCompression
         );
     }
 
@@ -1752,8 +1839,25 @@ public class RouterService {
                 entity.getCreatedAt(),
                 Boolean.TRUE.equals(entity.getCacheHit()),
                 entity.getLatencyMs() != null ? entity.getLatencyMs() : 0L,
-                entity.getRedactedItemsCount() != null ? entity.getRedactedItemsCount() : 0
+                entity.getRedactedItemsCount() != null ? entity.getRedactedItemsCount() : 0,
+                entity.getTokensSavedCompression() != null ? entity.getTokensSavedCompression() : 0
         );
+    }
+
+    /**
+     * Resultado inmutable del Compresor Automático de Prompts (Prompt Trimming & Token Optimizer).
+     *
+     * @param compressedPrompt        texto del prompt limpio y optimizado sin espacios ni puntuación redundante
+     * @param tokensBeforeCompression cantidad de tokens estimados antes de aplicar la compresión
+     * @param tokensAfterCompression  cantidad de tokens estimados tras aplicar la compresión
+     * @param tokensSaved             cantidad neta de tokens ahorrados gracias a la compresión ({@code >= 0})
+     */
+    public record PromptCompressionResult(
+            String compressedPrompt,
+            int tokensBeforeCompression,
+            int tokensAfterCompression,
+            int tokensSaved
+    ) {
     }
 
     /**

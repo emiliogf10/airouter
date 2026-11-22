@@ -1113,4 +1113,78 @@ describe('AI Cost Router Dashboard - Pruebas de Integración', () => {
       expect(screen.getByTestId('routed-latency-badge')).toHaveTextContent('12 ms');
     });
   });
+
+  /**
+   * Verifica la visualización de las métricas del Compresor Automático de Prompts (*Prompt Trimming*):
+   * - `data-testid="kpi-compressed-tokens-badge"` (`Compresor: -45 tok.`) en `StatsCards`.
+   * - `data-testid="routed-compression-badge"` (`-7 tok. comprimidos`) en `PromptPlayground` tras enviar un prompt.
+   */
+  it('renderiza los badges del Compresor Automático de Prompts en la tarjeta KPI de tokens y en el simulador', async () => {
+    const compressedRoutedResponse: RouterResponse = {
+      id: 'comp-uuid-8888',
+      userId: 'demo-user',
+      promptContent: 'Hola equipo, ¿podéis revisar este resumen? Gracias!',
+      modelRouted: 'gemini-2.5-flash',
+      tokensEstimated: 13,
+      simulatedResponse:
+        "[Simulación AI Cost Router] Petición procesada exitosamente por el modelo 'gemini-2.5-flash' (13 tokens estimados).",
+      createdAt: '2026-10-20T23:55:00',
+      cacheHit: false,
+      latencyMs: 9,
+      redactedItemsCount: 0,
+      tokensSavedCompression: 7,
+    };
+
+    const statsWithCompression: RouterStatsResponse = {
+      ...MOCK_GLOBAL_STATS,
+      totalRequests: 3,
+      totalTokensSavedCompression: 45,
+    };
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/prompt') && init?.method === 'POST') {
+        return new Response(JSON.stringify(compressedRoutedResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/stats')) {
+        return new Response(JSON.stringify(statsWithCompression), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify([compressedRoutedResponse, ...MOCK_INITIAL_LOGS]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('kpi-compressed-tokens-badge')).toHaveTextContent(
+        'Compresor: -45 tok.',
+      );
+    });
+
+    const promptTextarea = screen.getByLabelText(/Contenido del Prompt/i);
+    await userEvent.clear(promptTextarea);
+    await userEvent.type(
+      promptTextarea,
+      '   Hola     equipo   ,   ¿podéis    revisar    este    resumen   ????   Gracias   !!!!   ',
+    );
+    await userEvent.click(screen.getByTestId('submit-prompt-button'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('playground-result-card')).toBeInTheDocument();
+      expect(screen.getByTestId('routed-compression-badge')).toHaveTextContent(
+        '-7 tok. comprimidos',
+      );
+    });
+  });
 });

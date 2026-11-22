@@ -98,8 +98,16 @@ public class RequestLog {
     private Integer redactedItemsCount = 0;
 
     /**
+     * Cantidad de tokens ahorrados gracias al Compresor Automático de Prompts
+     * (Prompt Trimming & Token Optimizer) mediante limpieza de ruido y espacios redundantes.
+     */
+    @Builder.Default
+    @Column(name = "tokens_saved_compression", nullable = false)
+    private Integer tokensSavedCompression = 0;
+
+    /**
      * Constructor de compatibilidad de 6 argumentos sin el indicador explícito de acierto
-     * de caché ni métricas de latencia/DLP, inicializándolos en sus valores por defecto.
+     * de caché ni métricas de latencia, DLP o compresión, inicializándolos en sus valores por defecto.
      *
      * @param id identificador único del registro
      * @param userId identificador del usuario
@@ -115,12 +123,13 @@ public class RequestLog {
             String modelRouted,
             Integer tokensEstimated,
             LocalDateTime createdAt) {
-        this(id, userId, promptContent, modelRouted, tokensEstimated, createdAt, Boolean.FALSE, 0L, 0);
+        this(id, userId, promptContent, modelRouted, tokensEstimated, createdAt, Boolean.FALSE, 0L, 0, 0);
     }
 
     /**
-     * Constructor de compatibilidad de 7 argumentos sin métricas explícitas de latencia ni DLP,
-     * inicializando {@code latencyMs} en {@code 0L} y {@code redactedItemsCount} en {@code 0}.
+     * Constructor de compatibilidad de 7 argumentos sin métricas explícitas de latencia, DLP ni compresión,
+     * inicializando {@code latencyMs} en {@code 0L}, {@code redactedItemsCount} en {@code 0} y
+     * {@code tokensSavedCompression} en {@code 0}.
      *
      * @param id identificador único del registro
      * @param userId identificador del usuario
@@ -138,13 +147,40 @@ public class RequestLog {
             Integer tokensEstimated,
             LocalDateTime createdAt,
             Boolean cacheHit) {
-        this(id, userId, promptContent, modelRouted, tokensEstimated, createdAt, cacheHit, 0L, 0);
+        this(id, userId, promptContent, modelRouted, tokensEstimated, createdAt, cacheHit, 0L, 0, 0);
+    }
+
+    /**
+     * Constructor de compatibilidad de 9 argumentos sin la métrica explícita de tokens ahorrados
+     * por compresión, inicializando {@code tokensSavedCompression} en {@code 0}.
+     *
+     * @param id identificador único del registro
+     * @param userId identificador del usuario
+     * @param promptContent contenido íntegro del prompt
+     * @param modelRouted modelo al que se enrutó la petición
+     * @param tokensEstimated cantidad estimada de tokens
+     * @param createdAt fecha y hora de creación
+     * @param cacheHit indicador de acierto en la Caché Semántica
+     * @param latencyMs tiempo de respuesta en milisegundos
+     * @param redactedItemsCount elementos sensibles redactados por el Escudo DLP
+     */
+    public RequestLog(
+            UUID id,
+            String userId,
+            String promptContent,
+            String modelRouted,
+            Integer tokensEstimated,
+            LocalDateTime createdAt,
+            Boolean cacheHit,
+            Long latencyMs,
+            Integer redactedItemsCount) {
+        this(id, userId, promptContent, modelRouted, tokensEstimated, createdAt, cacheHit, latencyMs, redactedItemsCount, 0);
     }
 
     /**
      * Asigna automáticamente la fecha y hora de creación y los valores por defecto de
-     * {@code cacheHit}, {@code latencyMs} y {@code redactedItemsCount} antes de insertar
-     * el registro en la base de datos si no se han especificado previamente.
+     * {@code cacheHit}, {@code latencyMs}, {@code redactedItemsCount} y {@code tokensSavedCompression}
+     * antes de insertar el registro en la base de datos si no se han especificado previamente.
      */
     @PrePersist
     protected void onCreate() {
@@ -159,6 +195,9 @@ public class RequestLog {
         }
         if (this.redactedItemsCount == null) {
             this.redactedItemsCount = 0;
+        }
+        if (this.tokensSavedCompression == null) {
+            this.tokensSavedCompression = 0;
         }
     }
 

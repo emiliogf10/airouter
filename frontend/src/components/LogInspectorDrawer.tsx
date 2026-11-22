@@ -400,6 +400,14 @@ export const LogInspectorDrawer: React.FC<LogInspectorDrawerProps> = ({
                 <p className="text-base font-bold font-mono text-zinc-100 mt-1">
                   {log.tokensEstimated.toLocaleString('es-ES')} tokens
                 </p>
+                <p
+                  data-testid="inspector-compression-saved"
+                  className="text-[11px] font-medium text-indigo-300 mt-1"
+                >
+                  {(log.tokensSavedCompression ?? 0) > 0
+                    ? `-${log.tokensSavedCompression} tokens ahorrados por compresión`
+                    : '0 tokens comprimidos'}
+                </p>
               </div>
 
               {/* Coste Individual Facturado */}

@@ -1326,4 +1326,94 @@ class RouterServiceTest {
         assertEquals(17.5, stats.averageLatencyMs());
         assertEquals(3L, stats.totalRedactedItems());
     }
+
+    /**
+     * Verifica unitariamente {@link RouterService#compressPromptAndSaveTokens(String)} con un prompt
+     * que contiene espacios múltiples, tabulaciones, bloques de 4+ saltos de línea, espacios antes de
+     * signos de puntuación y secuencias {@code ????}/{@code !!!!}, comprobando que {@code compressedPrompt}
+     * queda limpio, {@code tokensBeforeCompression > tokensAfterCompression} y
+     * {@code tokensSaved == tokensBeforeCompression - tokensAfterCompression}.
+     */
+    @Test
+    @DisplayName("Compresor de Prompts (Unitario): compressPromptAndSaveTokens debe limpiar ruido sintáctico y calcular tokens ahorrados")
+    void shouldCompressPromptRedundantWhitespaceNewlinesAndPunctuationAndCountTokensSaved() {
+        String noisyPrompt = "   Hola     mundo \t\t ,   ¿cómo    estás????\n\n\n\n\nNecesito     optimizar    esto   !!!!   ";
+
+        RouterService.PromptCompressionResult result = routerService.compressPromptAndSaveTokens(noisyPrompt);
+
+        assertEquals("Hola mundo, ¿cómo estás?\n\nNecesito optimizar esto!", result.compressedPrompt());
+        assertTrue(result.tokensBeforeCompression() > result.tokensAfterCompression());
+        assertEquals(
+                result.tokensBeforeCompression() - result.tokensAfterCompression(),
+                result.tokensSaved()
+        );
+        assertTrue(result.tokensSaved() > 0);
+    }
+
+    /**
+     * Verifica que {@link RouterService#routePrompt(PromptRequest)} persista en {@link RequestLog}
+     * el prompt ya comprimido junto con {@code tokensSavedCompression > 0} y lo devuelva en
+     * {@link RouterResponse#tokensSavedCompression()}.
+     */
+    @Test
+    @DisplayName("Compresor de Prompts en routePrompt: Debe persistir el prompt comprimido y devolver tokensSavedCompression > 0")
+    void shouldPersistCompressedPromptAndTokensSavedOnRoutePrompt() {
+        ArgumentCaptor<RequestLog> logCaptor = ArgumentCaptor.forClass(RequestLog.class);
+        when(requestLogRepository.save(logCaptor.capture())).thenAnswer(invocation -> {
+            RequestLog arg = invocation.getArgument(0);
+            arg.setId(UUID.randomUUID());
+            arg.setCreatedAt(LocalDateTime.now());
+            return arg;
+        });
+
+        RouterResponse response = routerService.routePrompt(
+                new PromptRequest(
+                        "compression-user",
+                        "   Explícame      paso   a   paso   ,   por   favor   ????\n\n\n\n\nGracias   !!!!   "
+                )
+        );
+
+        assertEquals("Explícame paso a paso, por favor?\n\nGracias!", response.promptContent());
+        assertTrue(response.tokensSavedCompression() > 0);
+
+        RequestLog persistedLog = logCaptor.getValue();
+        assertEquals("Explícame paso a paso, por favor?\n\nGracias!", persistedLog.getPromptContent());
+        assertEquals(response.tokensSavedCompression(), persistedLog.getTokensSavedCompression());
+    }
+
+    /**
+     * Verifica que {@link RouterService#getStats(String)} sume correctamente {@code totalTokensSavedCompression}
+     * a partir de múltiples registros {@link RequestLog}.
+     */
+    @Test
+    @DisplayName("Compresor de Prompts en getStats: Debe agregar totalTokensSavedCompression de todos los registros")
+    void shouldAggregateTotalTokensSavedCompressionInGetStats() {
+        RequestLog log1 = RequestLog.builder()
+                .id(UUID.randomUUID())
+                .userId("comp-stats-user")
+                .promptContent("Prompt comprimido 1")
+                .modelRouted(RouterService.MODEL_FAST)
+                .tokensEstimated(8)
+                .createdAt(LocalDateTime.now().minusMinutes(2))
+                .tokensSavedCompression(6)
+                .build();
+
+        RequestLog log2 = RequestLog.builder()
+                .id(UUID.randomUUID())
+                .userId("comp-stats-user")
+                .promptContent("Prompt comprimido 2")
+                .modelRouted(RouterService.MODEL_PRO)
+                .tokensEstimated(20)
+                .createdAt(LocalDateTime.now().minusMinutes(1))
+                .tokensSavedCompression(11)
+                .build();
+
+        when(requestLogRepository.findByUserIdOrderByCreatedAtDesc("comp-stats-user"))
+                .thenReturn(List.of(log2, log1));
+
+        RouterStatsResponse stats = routerService.getStats("comp-stats-user");
+
+        assertEquals(2L, stats.totalRequests());
+        assertEquals(17L, stats.totalTokensSavedCompression());
+    }
 }
