@@ -1041,4 +1041,76 @@ describe('AI Cost Router Dashboard - Pruebas de Integración', () => {
       expect(screen.getByTestId('wallet-last-method')).toHaveTextContent('PayPal');
     });
   });
+
+  /**
+   * Verifica la visualización de las métricas del Escudo DLP de Privacidad y Telemetría de Latencia:
+   * - `data-testid="kpi-avg-latency-badge"` (`~18 ms`) y `data-testid="kpi-dlp-redacted-badge"` (`DLP: 3 protegidos`) en `StatsCards`.
+   * - `data-testid="routed-dlp-badge"` (`DLP: 2 datos protegidos`) y `data-testid="routed-latency-badge"` (`12 ms`) en `PromptPlayground`.
+   */
+  it('renderiza los badges de Telemetría de Latencia y Escudo DLP en las tarjetas KPI y en el simulador de prompts', async () => {
+    const dlpRoutedResponse: RouterResponse = {
+      id: 'dlp-uuid-7777',
+      userId: 'demo-user',
+      promptContent: 'Contacto: [EMAIL_REDACTED] con token [SECRET_REDACTED]',
+      modelRouted: 'gemini-2.5-flash',
+      tokensEstimated: 10,
+      simulatedResponse:
+        "[Simulación AI Cost Router] Petición procesada exitosamente por el modelo 'gemini-2.5-flash' (10 tokens estimados).",
+      createdAt: '2026-10-20T23:45:00',
+      cacheHit: false,
+      latencyMs: 12,
+      redactedItemsCount: 2,
+    };
+
+    const statsWithDlpAndLatency: RouterStatsResponse = {
+      ...MOCK_GLOBAL_STATS,
+      totalRequests: 3,
+      averageLatencyMs: 18,
+      totalRedactedItems: 3,
+    };
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/prompt') && init?.method === 'POST') {
+        return new Response(JSON.stringify(dlpRoutedResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/stats')) {
+        return new Response(JSON.stringify(statsWithDlpAndLatency), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify([dlpRoutedResponse, ...MOCK_INITIAL_LOGS]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('kpi-avg-latency-badge')).toHaveTextContent('~18 ms');
+      expect(screen.getByTestId('kpi-dlp-redacted-badge')).toHaveTextContent('DLP: 3 protegidos');
+    });
+
+    const promptTextarea = screen.getByLabelText(/Contenido del Prompt/i);
+    await userEvent.clear(promptTextarea);
+    await userEvent.type(
+      promptTextarea,
+      'Contacto: user@empresa.com con token AIzaSySecretKey123456789',
+    );
+    await userEvent.click(screen.getByTestId('submit-prompt-button'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('playground-result-card')).toBeInTheDocument();
+      expect(screen.getByTestId('routed-dlp-badge')).toHaveTextContent('DLP: 2 datos protegidos');
+      expect(screen.getByTestId('routed-latency-badge')).toHaveTextContent('12 ms');
+    });
+  });
 });

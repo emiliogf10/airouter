@@ -344,4 +344,41 @@ class RequestLogRepositoryTest {
         assertEquals(saved, foundOpt.get());
         assertEquals(saved.hashCode(), foundOpt.get().hashCode());
     }
+
+    /**
+     * Verifica la migración Flyway {@code V6__add_latency_and_dlp_columns_to_request_logs.sql}:
+     * comprueba la persistencia y recuperación en H2 de las columnas {@code latencyMs} y
+     * {@code redactedItemsCount}, así como la inicialización a sus valores por defecto ({@code 0L} y {@code 0})
+     * mediante {@code @PrePersist} cuando se reciben nulos.
+     */
+    @Test
+    @DisplayName("Migración V6 (latency_ms y redacted_items_count): Debe persistir métricas de latencia y DLP o sus valores por defecto (0L y 0)")
+    void shouldPersistLatencyMsAndRedactedItemsCountWithDefaultsAndExplicitValues() {
+        RequestLog defaultTelemetryLog = RequestLog.builder()
+                .userId("dlp-user-01")
+                .promptContent("Prompt limpio sin PII")
+                .modelRouted(RouterService.MODEL_FAST)
+                .tokensEstimated(6)
+                .latencyMs(null)
+                .redactedItemsCount(null)
+                .build();
+
+        RequestLog explicitTelemetryLog = RequestLog.builder()
+                .userId("dlp-user-02")
+                .promptContent("Contacto: [EMAIL_REDACTED], clave [SECRET_REDACTED] y DNI [ID_REDACTED]")
+                .modelRouted(RouterService.MODEL_PRO)
+                .tokensEstimated(18)
+                .latencyMs(42L)
+                .redactedItemsCount(3)
+                .build();
+
+        RequestLog savedDefault = requestLogRepository.saveAndFlush(defaultTelemetryLog);
+        RequestLog savedExplicit = requestLogRepository.saveAndFlush(explicitTelemetryLog);
+
+        assertEquals(0L, savedDefault.getLatencyMs(), "latencyMs debe inicializarse a 0L por defecto cuando es nulo");
+        assertEquals(0, savedDefault.getRedactedItemsCount(), "redactedItemsCount debe inicializarse a 0 por defecto cuando es nulo");
+
+        assertEquals(42L, savedExplicit.getLatencyMs());
+        assertEquals(3, savedExplicit.getRedactedItemsCount());
+    }
 }

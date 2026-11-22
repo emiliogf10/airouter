@@ -21,6 +21,8 @@ Cuando una empresa o desarrollador envía consultas (*prompts*) a modelos de Int
    * **Al llegar al 100% del presupuesto:** Activa el **Cortafuegos Duro**, bloqueando nuevas peticiones de coste con un aviso **HTTP `402 Payment Required`**.
 4. **Modo Híbrido de Conexión a IA Real (*BYOK — Bring Your Own Key*):**
    * Puedes usar la aplicación gratis en **Modo Simulación** o pegar tu propia API Key de **Google AI Studio (`AIzaSy...`)** para recibir respuestas reales generadas en vivo por Google Gemini.
+5. **Escudo DLP de Privacidad (*PII / Secret Redaction*) y Telemetría de Latencia (`latencyMs`):**
+   * Antes de que tu consulta salga hacia un proveedor externo o se guarde en el historial, el Gateway detecta y anonimiza automáticamente correos electrónicos (`[EMAIL_REDACTED]`), tarjetas bancarias (`[CARD_REDACTED]`), DNI/NIE (`[ID_REDACTED]`), teléfonos (`[PHONE_REDACTED]`) y claves API filtradas (`[SECRET_REDACTED]`), mostrando el número de datos protegidos y los milisegundos exactos (`ms`) que tardó la respuesta.
 
 ---
 
@@ -72,10 +74,10 @@ Ubicada en la parte superior fija de la pantalla:
 ---
 
 ### 3.2. Cuadrícula Superior de Métricas Clave (4 Tarjetas KPI)
-1. **Total de Peticiones:** Muestra el volumen total de consultas procesadas y cuántas fueron asignadas a `Flash` frente a `Pro`.
-2. **Coste Acumulado:** Muestra el gasto real facturado en la divisa activa (`€` o `$`) y lo compara justo debajo con la **Base Pro** (lo que habrías pagado sin AI Cost Router).
-3. **Tokens Usados:** Suma total de tokens estimados analizados y su proporción por modelo.
-4. **Ahorro Generado:**
+1. **Total de Peticiones:** Muestra el volumen total de consultas procesadas, un badge con la **latencia media (`~X ms`)** y cuántas fueron asignadas a `Flash` frente a `Pro`.
+2. **Tokens Estimados Totales:** Suma total de tokens estimados analizados, un badge del **Escudo DLP (`DLP: X protegidos`)** con el total de datos sensibles anonimizados y su proporción por modelo.
+3. **Coste Real Acumulado:** Muestra el gasto real facturado en la divisa activa (`€` o `$`) y lo compara justo debajo con la **Base Pro** (lo que habrías pagado sin AI Cost Router).
+4. **Ahorro Económico Generado:**
    * Muestra el dinero total ahorrado (en `€` o `$`) y un badge verde con el **porcentaje de ahorro (`%`)**.
    * En la esquina inferior derecha muestra el contador **`Caché Hit (0 €): X`** indicando cuántas peticiones salieron gratis gracias a la caché semántica.
 

@@ -9,3 +9,7 @@ React 19, Vite, TypeScript, Tailwind CSS v4, `react-router-dom` 7, `recharts` (p
 npm run dev      # http://localhost:5173 ; el proxy de Vite enviará /api a http://localhost:8080
 npm run build    # tsc -b && vite build (debe pasar sin errores)
 npm run lint     # oxlint o eslint (debe terminar con código 0)
+```
+
+## Uso del Grafo de Conocimiento (`graphify`)
+El repositorio dispone de un grafo de conocimiento en `graphify-out/` (`GRAPH_REPORT.md` y `graph.json`). Antes de buscar relaciones entre componentes o contratos TypeScript/DTOs, utiliza `python -m graphify query "<pregunta>"` o `python -m graphify path "<ComponenteA>" "<ComponenteB>"` desde la raíz del proyecto, y ejecuta `python -m graphify update .` tras modificar archivos en `frontend/src/`.

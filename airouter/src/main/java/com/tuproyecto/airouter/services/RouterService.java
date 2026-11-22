@@ -35,6 +35,9 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -199,6 +202,67 @@ public class RouterService {
             "refactorizar",
             "optimizar",
             "analizar en profundidad"
+    );
+
+    /**
+     * Marcador de reemplazo DLP para claves de API, tokens Bearer y secretos técnicos detectados en el prompt.
+     */
+    public static final String DLP_SECRET_REDACTED = "[SECRET_REDACTED]";
+
+    /**
+     * Marcador de reemplazo DLP para direcciones de correo electrónico detectadas en el prompt.
+     */
+    public static final String DLP_EMAIL_REDACTED = "[EMAIL_REDACTED]";
+
+    /**
+     * Marcador de reemplazo DLP para números de tarjetas bancarias de crédito o débito detectados en el prompt.
+     */
+    public static final String DLP_CARD_REDACTED = "[CARD_REDACTED]";
+
+    /**
+     * Marcador de reemplazo DLP para documentos de identidad españoles (DNI / NIE) detectados en el prompt.
+     */
+    public static final String DLP_ID_REDACTED = "[ID_REDACTED]";
+
+    /**
+     * Marcador de reemplazo DLP para números de teléfono nacionales o internacionales detectados en el prompt.
+     */
+    public static final String DLP_PHONE_REDACTED = "[PHONE_REDACTED]";
+
+    /**
+     * Patrón compilado del Escudo DLP para detectar secretos y claves de API ({@code AIza...}, {@code sk-...},
+     * {@code air_live_...}, {@code ghp_...} o {@code Bearer ...}).
+     */
+    private static final Pattern DLP_SECRET_PATTERN = Pattern.compile(
+            "(?i)(?:\\b(?:AIza[0-9A-Za-z_-]{15,}|sk-[0-9A-Za-z_-]{12,}|air_live_[0-9a-fA-F]{12,}|ghp_[0-9A-Za-z]{15,})\\b|Bearer\\s+[0-9A-Za-z._-]{15,})"
+    );
+
+    /**
+     * Patrón compilado del Escudo DLP para detectar direcciones de correo electrónico estándar.
+     */
+    private static final Pattern DLP_EMAIL_PATTERN = Pattern.compile(
+            "\\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}\\b"
+    );
+
+    /**
+     * Patrón compilado del Escudo DLP para detectar numeraciones de tarjetas bancarias (13 a 19 dígitos).
+     */
+    private static final Pattern DLP_CARD_PATTERN = Pattern.compile(
+            "\\b(?:\\d[ -]*?){13,19}\\b"
+    );
+
+    /**
+     * Patrón compilado del Escudo DLP para detectar documentos DNI o NIE españoles.
+     */
+    private static final Pattern DLP_ID_PATTERN = Pattern.compile(
+            "\\b(?:[0-9]{8}[A-Za-z]|[XYZxyz][0-9]{7}[A-Za-z])\\b"
+    );
+
+    /**
+     * Patrón compilado del Escudo DLP para detectar números telefónicos españoles o con prefijo internacional.
+     */
+    private static final Pattern DLP_PHONE_PATTERN = Pattern.compile(
+            "(?:\\+\\d{1,3}[\\s-]?)?\\b[6789]\\d{2}[\\s-]?\\d{3}[\\s-]?\\d{3}\\b"
     );
 
     /**
@@ -401,12 +465,19 @@ public class RouterService {
      */
     @Transactional
     public RouterResponse routePrompt(PromptRequest request, String clientApiKey) {
+        long startNanos = System.nanoTime();
         validateRequest(request);
 
         String normalizedUserId = request.userId().trim();
         validateManagedClientApiKeyIfPresent(clientApiKey, normalizedUserId);
 
-        String promptContent = request.prompt();
+        DlpSanitizationResult dlpResult = sanitizePromptPiiAndSecrets(request.prompt());
+        String promptContent = dlpResult.sanitizedPrompt();
+        int redactedItemsCount = dlpResult.redactedItemsCount();
+        if (redactedItemsCount > 0) {
+            log.info("Escudo DLP [PRIVACIDAD]: Se han anonimizado {} elementos sensibles en el prompt del usuario '{}'.",
+                    redactedItemsCount, normalizedUserId);
+        }
 
         int tokensEstimated = estimateTokens(promptContent);
         String initialModel = selectModel(promptContent, tokensEstimated);
@@ -462,6 +533,8 @@ public class RouterService {
             );
         }
 
+        long latencyMs = Math.max(1L, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos));
+
         RequestLog entityToSave = RequestLog.builder()
                 .userId(normalizedUserId)
                 .promptContent(promptContent)
@@ -469,10 +542,66 @@ public class RouterService {
                 .tokensEstimated(tokensEstimated)
                 .createdAt(LocalDateTime.now())
                 .cacheHit(isCacheHit)
+                .latencyMs(latencyMs)
+                .redactedItemsCount(redactedItemsCount)
                 .build();
 
         RequestLog savedEntity = requestLogRepository.save(entityToSave);
         return toRouterResponse(savedEntity, finalResponseText);
+    }
+
+    /**
+     * Analiza y anonimiza automáticamente datos personales identificables (PII) y secretos técnicos
+     * presentes en el texto de un prompt antes de su evaluación, cacheo, envío a proveedores externos
+     * o persistencia en base de datos (Escudo DLP de Privacidad).
+     *
+     * <p>Orden determinista de evaluación:</p>
+     * <ol>
+     *   <li>Secretos y claves API ({@link #DLP_SECRET_REDACTED}).</li>
+     *   <li>Direcciones de correo electrónico ({@link #DLP_EMAIL_REDACTED}).</li>
+     *   <li>Tarjetas bancarias de 13 a 19 dígitos ({@link #DLP_CARD_REDACTED}), evaluadas antes que los teléfonos.</li>
+     *   <li>Documentos DNI / NIE españoles ({@link #DLP_ID_REDACTED}).</li>
+     *   <li>Números de teléfono nacionales o internacionales ({@link #DLP_PHONE_REDACTED}).</li>
+     * </ol>
+     *
+     * @param rawPrompt texto original del prompt recibido
+     * @return {@link DlpSanitizationResult} con el texto sanitizado y el número total de elementos reemplazados
+     */
+    public DlpSanitizationResult sanitizePromptPiiAndSecrets(String rawPrompt) {
+        if (rawPrompt == null || rawPrompt.isEmpty()) {
+            return new DlpSanitizationResult(rawPrompt != null ? rawPrompt : "", 0);
+        }
+
+        int totalRedacted = 0;
+        String currentText = rawPrompt;
+
+        Pattern[] orderedPatterns = {
+            DLP_SECRET_PATTERN,
+            DLP_EMAIL_PATTERN,
+            DLP_CARD_PATTERN,
+            DLP_ID_PATTERN,
+            DLP_PHONE_PATTERN
+        };
+        String[] replacements = {
+            DLP_SECRET_REDACTED,
+            DLP_EMAIL_REDACTED,
+            DLP_CARD_REDACTED,
+            DLP_ID_REDACTED,
+            DLP_PHONE_REDACTED
+        };
+
+        for (int i = 0; i < orderedPatterns.length; i++) {
+            Matcher matcher = orderedPatterns[i].matcher(currentText);
+            StringBuilder buffer = new StringBuilder();
+            while (matcher.find()) {
+                totalRedacted++;
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(replacements[i]));
+            }
+            matcher.appendTail(buffer);
+            currentText = buffer.toString();
+        }
+
+        return new DlpSanitizationResult(currentText, totalRedacted);
     }
 
     /**
@@ -1399,12 +1528,20 @@ public class RouterService {
         long billedFastModelTokens = 0L;
         long billedProModelTokens = 0L;
         long cacheHits = 0L;
+        long totalLatencyMs = 0L;
+        long totalRedactedItems = 0L;
 
         for (RequestLog logEntry : logs) {
             long tokens = logEntry.getTokensEstimated() != null ? logEntry.getTokensEstimated() : 0L;
             boolean isCacheHit = Boolean.TRUE.equals(logEntry.getCacheHit());
             if (isCacheHit) {
                 cacheHits++;
+            }
+            if (logEntry.getLatencyMs() != null && logEntry.getLatencyMs() > 0L) {
+                totalLatencyMs += logEntry.getLatencyMs();
+            }
+            if (logEntry.getRedactedItemsCount() != null && logEntry.getRedactedItemsCount() > 0) {
+                totalRedactedItems += logEntry.getRedactedItemsCount();
             }
 
             if (MODEL_FAST.equals(logEntry.getModelRouted())) {
@@ -1451,6 +1588,12 @@ public class RouterService {
                     .doubleValue();
         }
 
+        double averageLatencyMs = totalRequests > 0
+                ? BigDecimal.valueOf(totalLatencyMs)
+                        .divide(BigDecimal.valueOf(totalRequests), PERCENTAGE_DECIMAL_SCALE, RoundingMode.HALF_UP)
+                        .doubleValue()
+                : 0.0;
+
         return new RouterStatsResponse(
                 totalRequests,
                 totalTokensEstimated,
@@ -1462,7 +1605,9 @@ public class RouterService {
                 estimatedBaselineProCostUsd,
                 estimatedSavingsUsd,
                 savingsPercentage,
-                cacheHits
+                cacheHits,
+                averageLatencyMs,
+                totalRedactedItems
         );
     }
 
@@ -1594,7 +1739,7 @@ public class RouterService {
      *
      * @param entity       entidad persistida en base de datos
      * @param responseText texto de respuesta real o simulada asociado a la petición
-     * @return DTO {@link RouterResponse} con todos los campos mapeados incluyendo {@code cacheHit}
+     * @return DTO {@link RouterResponse} con todos los campos mapeados incluyendo {@code cacheHit}, {@code latencyMs} y {@code redactedItemsCount}
      */
     private RouterResponse toRouterResponse(RequestLog entity, String responseText) {
         return new RouterResponse(
@@ -1605,8 +1750,22 @@ public class RouterService {
                 entity.getTokensEstimated(),
                 responseText,
                 entity.getCreatedAt(),
-                Boolean.TRUE.equals(entity.getCacheHit())
+                Boolean.TRUE.equals(entity.getCacheHit()),
+                entity.getLatencyMs() != null ? entity.getLatencyMs() : 0L,
+                entity.getRedactedItemsCount() != null ? entity.getRedactedItemsCount() : 0
         );
+    }
+
+    /**
+     * Resultado inmutable del análisis y anonimización del Escudo DLP de Privacidad sobre un prompt.
+     *
+     * @param sanitizedPrompt    texto del prompt con todos los secretos y datos PII reemplazados por sus marcadores
+     * @param redactedItemsCount cantidad total de elementos sensibles detectados y anonimizados
+     */
+    public record DlpSanitizationResult(
+            String sanitizedPrompt,
+            int redactedItemsCount
+    ) {
     }
 
     /**

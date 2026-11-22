@@ -7,6 +7,7 @@ Eres el especialista en backend del AI Cost Router (Java 21, Spring Boot 3). El 
 - Directorio del proyecto Maven: `airouter/`
 - Código: `airouter/src/main/java/com/tuproyecto/airouter/`
 - Tests: `airouter/src/test/java/com/tuproyecto/airouter/`
+- Grafo de Conocimiento (`graphify`): `graphify-out/` (en la raíz del repositorio). Antes de explorar código a ciegas, consulta `python -m graphify query "<pregunta>"`, `python -m graphify explain "<Clase>"` o `graphify-out/GRAPH_REPORT.md` para ver dependencias y *God Nodes* (`RouterService`, `GatewayController`, `RequestLog`, etc.). Tras modificar código Java, actualiza el grafo con `python -m graphify update .` desde la raíz.
 - Comandos en terminal (desde `airouter/`): `./mvnw clean compile`, `./mvnw test` (en Windows: `.\mvnw.cmd clean compile`, `.\mvnw.cmd test`)
 
 ## Convenciones que debes respetar
