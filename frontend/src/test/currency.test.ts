@@ -5,6 +5,8 @@ import {
   convertFromUsd,
   convertToUsd,
   formatCurrency,
+  formatProviderLabel,
+  isAdvancedModel,
   USD_TO_EUR_RATE,
 } from '../utils/currency';
 
@@ -98,5 +100,34 @@ describe('Utilidades de Moneda (currency.ts)', () => {
     // Coste base Pro hipotético para 100.000 tokens = $0.125000 USD
     expect(calculateBaselineProCostUsd(100_000)).toBe(0.125);
     expect(calculateBaselineProCostUsd(0)).toBe(0);
+  });
+
+  /**
+   * Verifica las tarifas multi-proveedor (`OpenAI` y `Anthropic Claude`), la clasificación
+   * de modelos avanzados (`isAdvancedModel`) y el formateo de etiquetas (`formatProviderLabel`).
+   */
+  it('calcula tarifas multi-proveedor para OpenAI y Anthropic y clasifica modelos avanzados', () => {
+    // OpenAI: gpt-4o-mini ($0.15/1M) y gpt-4o ($2.50/1M)
+    expect(calculateLogCostUsd('gpt-4o-mini', 100_000, false)).toBe(0.015);
+    expect(calculateLogCostUsd('gpt-4o', 100_000, false)).toBe(0.25);
+    expect(calculateBaselineProCostUsd(100_000, 'gpt-4o-mini', 'OPENAI')).toBe(0.25);
+
+    // Anthropic: claude-3-5-haiku ($0.80/1M) y claude-3-7-sonnet ($3.00/1M)
+    expect(calculateLogCostUsd('claude-3-5-haiku', 100_000, false)).toBe(0.08);
+    expect(calculateLogCostUsd('claude-3-7-sonnet', 100_000, false)).toBe(0.3);
+    expect(calculateBaselineProCostUsd(100_000, 'claude-3-5-haiku', 'ANTHROPIC')).toBe(0.3);
+
+    // Clasificación de modelos Pro vs Económicos
+    expect(isAdvancedModel('gemini-2.5-pro')).toBe(true);
+    expect(isAdvancedModel('gpt-4o')).toBe(true);
+    expect(isAdvancedModel('claude-3-7-sonnet')).toBe(true);
+    expect(isAdvancedModel('gemini-2.5-flash')).toBe(false);
+    expect(isAdvancedModel('gpt-4o-mini')).toBe(false);
+    expect(isAdvancedModel('claude-3-5-haiku')).toBe(false);
+
+    // Etiquetas de proveedor
+    expect(formatProviderLabel('OPENAI')).toBe('OpenAI');
+    expect(formatProviderLabel('ANTHROPIC')).toBe('Anthropic Claude');
+    expect(formatProviderLabel('GOOGLE_GEMINI')).toBe('Google Gemini');
   });
 });

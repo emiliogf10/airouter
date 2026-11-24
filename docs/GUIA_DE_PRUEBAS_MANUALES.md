@@ -183,3 +183,14 @@ Abre tu navegador en: 👉 **`http://localhost:5173`**
 - [ ] **13.2. Resultado esperado:**
   * En la tarjeta de resultado aparece el nuevo badge violeta **`-X tok. comprimidos`**.
   * En la tarjeta KPI superior **"Tokens Estimados Totales"** aumenta el contador **`Compresor: -X tok.`**, y al abrir **`Ver detalle`** (`LogInspectorDrawer`) en la fila de la tabla se muestra el texto limpio y la etiqueta **`-X tokens ahorrados por compresión`**.
+
+---
+
+### 14. Enrutamiento Multi-Proveedor (`Google Gemini` + `OpenAI` + `Anthropic Claude`) y Comparador de Tarifas
+- [ ] **14.1. Probar enrutamiento con OpenAI y Anthropic:**
+  * En el **Simulador de Enrutamiento en Vivo**, abre el desplegable **"Proveedor de IA (Multi-LLM)"** y selecciona **`OpenAI (GPT-4o mini / GPT-4o)`**.
+  * Pulsa **`Ejemplo Flash (Simple)`** y luego **`Evaluar y Enrutar Prompt`**.
+- [ ] **14.2. Resultado esperado:**
+  * En la tarjeta de resultado aparecen los badges **`OpenAI`** y **`gpt-4o-mini`**.
+  * Justo debajo aparece el bloque **"Comparativa Multi-Proveedor en Tiempo Real"** mostrando lado a lado cuánto cuesta exactamente esa misma petición en **Google Gemini**, **OpenAI** y **Anthropic Claude** en la divisa activa (`EUR €` o `USD $`).
+- [ ] **14.3.** Cambia ahora el desplegable a **`Anthropic (Claude 3.5 Haiku / 3.7 Sonnet)`**, pulsa **`Ejemplo Pro (Arquitectura)`** y envíalo: verifica que enruta a **`claude-3-7-sonnet`** y compara las tarifas Pro de los 3 proveedores.

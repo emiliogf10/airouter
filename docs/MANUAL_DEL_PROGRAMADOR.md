@@ -60,7 +60,7 @@ flowchart TB
 | **Motor BD** | H2 Database (en memoria `airouterdb`) / PostgreSQL | Base de datos transaccional para desarrollo/tests e integración continua. |
 | **Frontend Core** | React 19 + TypeScript 5.9 + Vite 8 | Interfaz de usuario reactiva con tipado estático estricto. |
 | **Estilos y Gráficas** | Tailwind CSS v4 (`@tailwindcss/vite`), Lucide React, Recharts | Sistema de diseño estilo Vercel / `shadcn/ui` con **0 estilos en línea (`style=`)**. |
-| **Calidad y CI/CD** | JUnit 5, Mockito, MockMvc (77 tests) + Vitest, RTL (25 tests) + GitHub Actions & Dependabot | 102 tests automatizados ejecutados en cada Pull Request. |
+| **Calidad y CI/CD** | JUnit 5, Mockito, MockMvc (82 tests) + Vitest, RTL (27 tests) + GitHub Actions & Dependabot | 109 tests automatizados ejecutados en cada Pull Request. |
 
 ---
 
@@ -86,6 +86,8 @@ Los scripts SQL residen en `airouter/src/main/resources/db/migration/`:
    * Añade a `request_logs` las columnas `latency_ms BIGINT NOT NULL DEFAULT 0` (latencia extremo a extremo en milisegundos) y `redacted_items_count INTEGER NOT NULL DEFAULT 0` (contador de elementos sensibles anonimizados por el Escudo DLP).
 7. **`V7__add_compressed_tokens_saved_to_request_logs.sql`:**
    * Añade a `request_logs` la columna `tokens_saved_compression INTEGER NOT NULL DEFAULT 0` (contador de tokens ahorrados por el Compresor Automático de Prompts).
+8. **`V8__add_provider_to_request_logs.sql`:**
+   * Añade a `request_logs` la columna `provider VARCHAR(40) NOT NULL DEFAULT 'GOOGLE_GEMINI'` (proveedor LLM seleccionado: `GOOGLE_GEMINI`, `OPENAI`, `ANTHROPIC`).
 
 ### 2.2. Reglas de Diseño en Entidades JPA (`RequestLog.java` y `UserBudget.java`)
 * **Prohibición de `@Data` en JPA:** Conforme a `GEMINI.md`, las entidades utilizan exclusivamente `@Entity`, `@Getter`, `@Setter`, `@Builder`, `@NoArgsConstructor` y `@AllArgsConstructor`.

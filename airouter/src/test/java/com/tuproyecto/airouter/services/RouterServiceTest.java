@@ -1416,4 +1416,117 @@ class RouterServiceTest {
         assertEquals(2L, stats.totalRequests());
         assertEquals(17L, stats.totalTokensSavedCompression());
     }
+
+    /**
+     * Verifica el enrutamiento multi-proveedor en {@link RouterService#routePrompt(PromptRequest)}:
+     * <ul>
+     *   <li>{@code OPENAI} simple -> {@code gpt-4o-mini}.</li>
+     *   <li>{@code OPENAI} complejo -> {@code gpt-4o}.</li>
+     *   <li>{@code ANTHROPIC} simple -> {@code claude-3-5-haiku}.</li>
+     *   <li>{@code ANTHROPIC} complejo -> {@code claude-3-7-sonnet}.</li>
+     * </ul>
+     */
+    @Test
+    @DisplayName("Multi-Proveedor en routePrompt: Debe seleccionar gpt-4o-mini/gpt-4o para OPENAI y claude-3-5-haiku/claude-3-7-sonnet para ANTHROPIC")
+    void shouldRouteToOpenAiAndAnthropicModelsBasedOnComplexityAndProvider() {
+        when(requestLogRepository.save(any(RequestLog.class))).thenAnswer(invocation -> {
+            RequestLog arg = invocation.getArgument(0);
+            arg.setId(UUID.randomUUID());
+            arg.setCreatedAt(LocalDateTime.now());
+            return arg;
+        });
+
+        RouterResponse openAiSimple = routerService.routePrompt(
+                new PromptRequest("multi-user", "Saludo breve para OpenAI", "OPENAI")
+        );
+        assertEquals(RouterService.PROVIDER_OPENAI, openAiSimple.provider());
+        assertEquals(RouterService.MODEL_OPENAI_FAST, openAiSimple.modelRouted());
+
+        RouterResponse openAiComplex = routerService.routePrompt(
+                new PromptRequest("multi-user", "Necesito optimizar la arquitectura con OpenAI", "openai")
+        );
+        assertEquals(RouterService.PROVIDER_OPENAI, openAiComplex.provider());
+        assertEquals(RouterService.MODEL_OPENAI_PRO, openAiComplex.modelRouted());
+
+        RouterResponse anthropicSimple = routerService.routePrompt(
+                new PromptRequest("multi-user", "Saludo breve para Claude", "ANTHROPIC")
+        );
+        assertEquals(RouterService.PROVIDER_ANTHROPIC, anthropicSimple.provider());
+        assertEquals(RouterService.MODEL_ANTHROPIC_FAST, anthropicSimple.modelRouted());
+
+        RouterResponse anthropicComplex = routerService.routePrompt(
+                new PromptRequest("multi-user", "Necesito analizar en profundidad la arquitectura con Claude", "anthropic")
+        );
+        assertEquals(RouterService.PROVIDER_ANTHROPIC, anthropicComplex.provider());
+        assertEquals(RouterService.MODEL_ANTHROPIC_PRO, anthropicComplex.modelRouted());
+    }
+
+    /**
+     * Verifica que solicitar un proveedor no soportado (ej. {@code "META_LLAMA"}) lance
+     * {@link InvalidPromptException} sin guardar ningún registro en base de datos.
+     */
+    @Test
+    @DisplayName("Multi-Proveedor Validación: Debe lanzar InvalidPromptException cuando el proveedor no está soportado")
+    void shouldRejectUnsupportedProviderWithInvalidPromptException() {
+        InvalidPromptException ex = assertThrows(
+                InvalidPromptException.class,
+                () -> routerService.routePrompt(new PromptRequest("multi-user", "Hola", "META_LLAMA"))
+        );
+
+        assertTrue(ex.getMessage().contains("META_LLAMA"));
+        verify(requestLogRepository, never()).save(any(RequestLog.class));
+    }
+
+    /**
+     * Verifica que {@link RouterService#getStats(String)} calcule con exactitud {@code estimatedActualCostUsd}
+     * y {@code estimatedBaselineProCostUsd} aplicando las tarifas oficiales de cada proveedor:
+     * <ul>
+     *   <li>{@code OPENAI}: {@code gpt-4o-mini} a {@code $0.15/1M} frente a base {@code gpt-4o} a {@code $2.50/1M}.</li>
+     *   <li>{@code ANTHROPIC}: {@code claude-3-5-haiku} a {@code $0.80/1M} frente a base {@code claude-3-7-sonnet} a {@code $3.00/1M}.</li>
+     * </ul>
+     */
+    @Test
+    @DisplayName("Multi-Proveedor FinOps en getStats: Debe calcular costes reales y base según las tarifas de OpenAI y Anthropic")
+    void shouldCalculateMultiProviderCostsAndSavingsInGetStats() {
+        // 100.000 tokens en gpt-4o-mini: Real = $0.015000 USD, Base (gpt-4o) = $0.250000 USD
+        RequestLog openAiMiniLog = RequestLog.builder()
+                .id(UUID.randomUUID())
+                .userId("multi-finops-user")
+                .promptContent("Prompt OpenAI económico")
+                .modelRouted(RouterService.MODEL_OPENAI_FAST)
+                .provider(RouterService.PROVIDER_OPENAI)
+                .tokensEstimated(100_000)
+                .createdAt(LocalDateTime.now().minusMinutes(2))
+                .cacheHit(false)
+                .build();
+
+        // 100.000 tokens en claude-3-5-haiku: Real = $0.080000 USD, Base (claude-3-7-sonnet) = $0.300000 USD
+        RequestLog anthropicHaikuLog = RequestLog.builder()
+                .id(UUID.randomUUID())
+                .userId("multi-finops-user")
+                .promptContent("Prompt Anthropic económico")
+                .modelRouted(RouterService.MODEL_ANTHROPIC_FAST)
+                .provider(RouterService.PROVIDER_ANTHROPIC)
+                .tokensEstimated(100_000)
+                .createdAt(LocalDateTime.now().minusMinutes(1))
+                .cacheHit(false)
+                .build();
+
+        when(requestLogRepository.findByUserIdOrderByCreatedAtDesc("multi-finops-user"))
+                .thenReturn(List.of(anthropicHaikuLog, openAiMiniLog));
+
+        RouterStatsResponse stats = routerService.getStats("multi-finops-user");
+
+        assertEquals(2L, stats.totalRequests());
+        assertEquals(2L, stats.fastModelRequests());
+        assertEquals(0L, stats.proModelRequests());
+        assertEquals(200_000L, stats.totalTokensEstimated());
+        // Coste real total: 0.015000 + 0.080000 = $0.095000 USD
+        assertEquals(new BigDecimal("0.095000"), stats.estimatedActualCostUsd());
+        // Coste base Pro total: 0.250000 + 0.300000 = $0.550000 USD
+        assertEquals(new BigDecimal("0.550000"), stats.estimatedBaselineProCostUsd());
+        // Ahorro neto: 0.550000 - 0.095000 = $0.455000 USD (82.73%)
+        assertEquals(new BigDecimal("0.455000"), stats.estimatedSavingsUsd());
+        assertEquals(82.73, stats.savingsPercentage());
+    }
 }

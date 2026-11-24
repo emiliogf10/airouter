@@ -413,4 +413,46 @@ class RequestLogRepositoryTest {
         assertEquals(0, savedDefault.getTokensSavedCompression(), "tokensSavedCompression debe inicializarse a 0 por defecto cuando es nulo");
         assertEquals(14, savedExplicit.getTokensSavedCompression());
     }
+
+    /**
+     * Verifica la migración Flyway {@code V8__add_provider_column_to_request_logs.sql}:
+     * comprueba la persistencia y recuperación en H2 de la columna {@code provider} tanto con valores
+     * explícitos ({@code "OPENAI"} y {@code "ANTHROPIC"}) como con su valor por defecto
+     * ({@code "GOOGLE_GEMINI"}) asignado mediante {@code @PrePersist} cuando se recibe nulo.
+     */
+    @Test
+    @DisplayName("Migración V8 (provider): Debe persistir provider explícito (OPENAI/ANTHROPIC) o su valor por defecto (GOOGLE_GEMINI)")
+    void shouldPersistProviderWithDefaultGoogleGeminiAndExplicitMultiProviderValues() {
+        RequestLog defaultProviderLog = RequestLog.builder()
+                .userId("multi-user-01")
+                .promptContent("Prompt por defecto para Gemini")
+                .modelRouted(RouterService.MODEL_FAST)
+                .tokensEstimated(6)
+                .provider(null)
+                .build();
+
+        RequestLog openAiLog = RequestLog.builder()
+                .userId("multi-user-02")
+                .promptContent("Prompt enrutado a OpenAI")
+                .modelRouted(RouterService.MODEL_OPENAI_FAST)
+                .tokensEstimated(7)
+                .provider(RouterService.PROVIDER_OPENAI)
+                .build();
+
+        RequestLog anthropicLog = RequestLog.builder()
+                .userId("multi-user-03")
+                .promptContent("Prompt complejo de arquitectura enrutado a Anthropic")
+                .modelRouted(RouterService.MODEL_ANTHROPIC_PRO)
+                .tokensEstimated(14)
+                .provider(RouterService.PROVIDER_ANTHROPIC)
+                .build();
+
+        RequestLog savedDefault = requestLogRepository.saveAndFlush(defaultProviderLog);
+        RequestLog savedOpenAi = requestLogRepository.saveAndFlush(openAiLog);
+        RequestLog savedAnthropic = requestLogRepository.saveAndFlush(anthropicLog);
+
+        assertEquals(RouterService.PROVIDER_GOOGLE_GEMINI, savedDefault.getProvider(), "provider debe inicializarse a GOOGLE_GEMINI por defecto");
+        assertEquals(RouterService.PROVIDER_OPENAI, savedOpenAi.getProvider());
+        assertEquals(RouterService.PROVIDER_ANTHROPIC, savedAnthropic.getProvider());
+    }
 }

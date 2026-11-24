@@ -1187,4 +1187,80 @@ describe('AI Cost Router Dashboard - Pruebas de Integración', () => {
       );
     });
   });
+
+  /**
+   * Verifica el selector Multi-Proveedor (`data-testid="playground-provider-select"`):
+   * al seleccionar `"OPENAI"` y enviar un prompt, se incluye `provider: 'OPENAI'` en la petición,
+   * se muestra el badge `data-testid="routed-provider-badge"` (`OpenAI`), el modelo `gpt-4o-mini`
+   * y la comparativa en tiempo real `data-testid="multi-provider-comparison"`.
+   */
+  it('permite seleccionar el proveedor OPENAI en el simulador, envía provider: OPENAI y muestra la comparativa Multi-Proveedor', async () => {
+    let capturedPromptPayload: { userId: string; prompt: string; provider?: string } | null = null;
+
+    const openAiRoutedResponse: RouterResponse = {
+      id: 'multi-uuid-5555',
+      userId: 'demo-user',
+      promptContent: 'Dame tres consejos rápidos',
+      modelRouted: 'gpt-4o-mini',
+      provider: 'OPENAI',
+      tokensEstimated: 7,
+      simulatedResponse:
+        "[Simulación AI Cost Router · OpenAI] Petición procesada exitosamente por el modelo 'gpt-4o-mini' (7 tokens estimados).",
+      createdAt: '2026-10-21T00:05:00',
+      cacheHit: false,
+      latencyMs: 11,
+      redactedItemsCount: 0,
+      tokensSavedCompression: 0,
+    };
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/prompt') && init?.method === 'POST') {
+        capturedPromptPayload = JSON.parse(String(init.body)) as {
+          userId: string;
+          prompt: string;
+          provider?: string;
+        };
+        return new Response(JSON.stringify(openAiRoutedResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/stats')) {
+        return new Response(JSON.stringify(MOCK_GLOBAL_STATS), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify([openAiRoutedResponse, ...MOCK_INITIAL_LOGS]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<App />);
+
+    const providerSelect = await screen.findByTestId('playground-provider-select');
+    await userEvent.selectOptions(providerSelect, 'OPENAI');
+
+    const promptTextarea = screen.getByLabelText(/Contenido del Prompt/i);
+    await userEvent.clear(promptTextarea);
+    await userEvent.type(promptTextarea, 'Dame tres consejos rápidos');
+    await userEvent.click(screen.getByTestId('submit-prompt-button'));
+
+    await waitFor(() => {
+      expect(capturedPromptPayload).toEqual({
+        userId: 'demo-user',
+        prompt: 'Dame tres consejos rápidos',
+        provider: 'OPENAI',
+      });
+      expect(screen.getByTestId('playground-result-card')).toBeInTheDocument();
+      expect(screen.getByTestId('routed-provider-badge')).toHaveTextContent('OpenAI');
+      expect(screen.getByTestId('routed-model-badge')).toHaveTextContent('gpt-4o-mini');
+      expect(screen.getByTestId('multi-provider-comparison')).toBeInTheDocument();
+    });
+  });
 });
