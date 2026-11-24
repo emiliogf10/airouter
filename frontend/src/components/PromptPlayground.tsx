@@ -6,6 +6,7 @@ import {
   Cpu,
   Database,
   KeyRound,
+  Layers,
   Send,
   ShieldCheck,
   Sparkles,
@@ -14,7 +15,12 @@ import {
   Zap,
 } from 'lucide-react';
 import { ApiError, sendPrompt } from '../services/api';
-import type { RouterResponse } from '../types/router';
+import type { LlmProviderCode, RouterResponse } from '../types/router';
+import {
+  calculateLogCostUsd,
+  formatProviderLabel,
+  isAdvancedModel,
+} from '../utils/currency';
 
 /**
  * Propiedades del simulador interactivo de prompts (`PromptPlayground`).
@@ -60,6 +66,7 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
   externalApiKeySignal = 0,
 }) => {
   const [userId, setUserId] = useState<string>('demo-user');
+  const [provider, setProvider] = useState<LlmProviderCode>('AUTO');
   const [apiKey, setApiKey] = useState<string>('');
   const [prompt, setPrompt] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -104,10 +111,11 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
 
     setIsSubmitting(true);
     try {
-      const result = await sendPrompt(
-        { userId: trimmedUser, prompt },
-        apiKey,
-      );
+      const payload =
+        provider === 'AUTO'
+          ? { userId: trimmedUser, prompt }
+          : { userId: trimmedUser, prompt, provider };
+      const result = await sendPrompt(payload, apiKey);
       setLastResult(result);
       onPromptSuccess(result);
       onUserOrBudgetActivity?.(trimmedUser);
@@ -154,7 +162,7 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
     return 'Error en la Petición';
   };
 
-  const isProModel = lastResult?.modelRouted === 'gemini-2.5-pro';
+  const isProModel = isAdvancedModel(lastResult?.modelRouted);
   const isSimulatedMode =
     !lastResult?.simulatedResponse ||
     lastResult.simulatedResponse.startsWith(SIMULATION_RESPONSE_PREFIX);
@@ -239,6 +247,34 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
                 <span className="text-zinc-300 font-medium">Google Gemini real</span>, o déjalo vacío para{' '}
                 <span className="text-zinc-300 font-medium">Modo Simulación</span> sin coste.
               </p>
+            </div>
+          </div>
+
+          {/* Selector de Proveedor LLM Multi-Proveedor */}
+          <div>
+            <label
+              htmlFor="playground-provider"
+              className="block text-xs font-medium text-zinc-300 mb-1.5"
+            >
+              Proveedor de IA (<code className="text-indigo-400">provider</code>)
+            </label>
+            <div className="relative">
+              <Layers
+                className="w-4 h-4 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                aria-hidden="true"
+              />
+              <select
+                id="playground-provider"
+                data-testid="playground-provider-select"
+                value={provider}
+                onChange={(e) => setProvider(e.target.value as LlmProviderCode)}
+                className="w-full pl-9 pr-3 py-2 text-sm bg-zinc-950/80 border border-white/10 rounded-lg text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500/50 transition cursor-pointer"
+              >
+                <option value="AUTO">Auto (Mejor Precio Global — Gemini)</option>
+                <option value="GOOGLE_GEMINI">Google Gemini (2.5 Flash / 2.5 Pro)</option>
+                <option value="OPENAI">OpenAI (GPT-4o mini / GPT-4o)</option>
+                <option value="ANTHROPIC">Anthropic (Claude 3.5 Haiku / 3.7 Sonnet)</option>
+              </select>
             </div>
           </div>
 
@@ -373,6 +409,13 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
                 {isSimulatedMode ? 'Modo Simulación' : 'Gemini API Real'}
               </span>
               <span
+                data-testid="routed-provider-badge"
+                className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-zinc-800/90 text-zinc-200 border border-white/10"
+              >
+                <Layers className="w-3 h-3 text-indigo-400" aria-hidden="true" />
+                {formatProviderLabel(lastResult.provider)}
+              </span>
+              <span
                 data-testid="routed-model-badge"
                 className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium border ${
                   isProModel
@@ -411,6 +454,55 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
               {lastResult.simulatedResponse}
             </p>
           )}
+
+          {/* Comparativa Multi-Proveedor en Tiempo Real */}
+          <div
+            data-testid="multi-provider-comparison"
+            className="pt-2 border-t border-white/5 space-y-1.5"
+          >
+            <p className="text-[11px] font-medium text-zinc-400">
+              Comparativa de Tarifa Multi-Proveedor ({lastResult.tokensEstimated} tokens · Nivel{' '}
+              {isProModel ? 'Avanzado / Pro' : 'Rápido / Económico'}):
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] font-mono">
+              <div className="p-2 rounded-lg bg-zinc-900/80 border border-white/5 flex items-center justify-between">
+                <span className="text-zinc-300">
+                  {isProModel ? 'gemini-2.5-pro' : 'gemini-2.5-flash'}
+                </span>
+                <span className="text-emerald-400 font-semibold">
+                  $
+                  {calculateLogCostUsd(
+                    isProModel ? 'gemini-2.5-pro' : 'gemini-2.5-flash',
+                    lastResult.tokensEstimated,
+                  ).toFixed(6)}
+                </span>
+              </div>
+              <div className="p-2 rounded-lg bg-zinc-900/80 border border-white/5 flex items-center justify-between">
+                <span className="text-zinc-300">
+                  {isProModel ? 'gpt-4o' : 'gpt-4o-mini'}
+                </span>
+                <span className="text-indigo-300 font-semibold">
+                  $
+                  {calculateLogCostUsd(
+                    isProModel ? 'gpt-4o' : 'gpt-4o-mini',
+                    lastResult.tokensEstimated,
+                  ).toFixed(6)}
+                </span>
+              </div>
+              <div className="p-2 rounded-lg bg-zinc-900/80 border border-white/5 flex items-center justify-between">
+                <span className="text-zinc-300">
+                  {isProModel ? 'claude-3-7-sonnet' : 'claude-3-5-haiku'}
+                </span>
+                <span className="text-amber-300 font-semibold">
+                  $
+                  {calculateLogCostUsd(
+                    isProModel ? 'claude-3-7-sonnet' : 'claude-3-5-haiku',
+                    lastResult.tokensEstimated,
+                  ).toFixed(6)}
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </section>

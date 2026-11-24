@@ -25,6 +25,8 @@ Cuando una empresa o desarrollador envía consultas (*prompts*) a modelos de Int
    * Antes de que tu consulta salga hacia un proveedor externo o se guarde en el historial, el Gateway detecta y anonimiza automáticamente correos electrónicos (`[EMAIL_REDACTED]`), tarjetas bancarias (`[CARD_REDACTED]`), DNI/NIE (`[ID_REDACTED]`), teléfonos (`[PHONE_REDACTED]`) y claves API filtradas (`[SECRET_REDACTED]`), mostrando el número de datos protegidos y los milisegundos exactos (`ms`) que tardó la respuesta.
 6. **Compresor Automático de Prompts (*Prompt Trimming & Token Optimizer*):**
    * Compacta espacios redundantes, bloques de saltos de línea repetidos y signos de puntuación duplicados antes de enviar la consulta al LLM, registrando los tokens adicionales ahorrados (`-X tok. comprimidos`) en las tarjetas KPI, en el simulador, en la tabla de historial y en el visor de detalle.
+7. **Enrutamiento Multi-Proveedor (`Google Gemini` + `OpenAI` + `Anthropic Claude`) y Comparador de Tarifas:**
+   * Permite seleccionar el proveedor en el simulador (**`Auto / Mejor Precio Global`**, **`Google Gemini`**, **`OpenAI`** o **`Anthropic Claude`**), enrutando automáticamente al modelo Rápido o Avanzado de ese proveedor (`gemini-2.5-flash`/`gemini-2.5-pro`, `gpt-4o-mini`/`gpt-4o`, `claude-3-5-haiku`/`claude-3-7-sonnet`) y mostrando una tabla comparativa en tiempo real con lo que cuesta esa consulta en los 3 proveedores.
 
 ---
 

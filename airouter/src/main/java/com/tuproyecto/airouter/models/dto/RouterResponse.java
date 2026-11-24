@@ -7,8 +7,9 @@ import java.util.UUID;
  * DTO de salida que encapsula el resultado del enrutamiento de un prompt y los metadatos
  * registrados en el historial de peticiones, incluyendo si la respuesta provino de la
  * Caché Semántica de Coste Cero ({@code cacheHit}), la latencia extremo a extremo ({@code latencyMs}),
- * la cantidad de elementos sensibles anonimizados por el Escudo DLP ({@code redactedItemsCount})
- * y los tokens ahorrados por el Compresor Automático de Prompts ({@code tokensSavedCompression}).
+ * la cantidad de elementos sensibles anonimizados por el Escudo DLP ({@code redactedItemsCount}),
+ * los tokens ahorrados por el Compresor Automático de Prompts ({@code tokensSavedCompression})
+ * y el proveedor de IA efectivo que procesó la petición ({@code provider}).
  *
  * @param id                     identificador único universal (UUID) del registro de la petición
  * @param userId                 identificador del usuario que originó la petición
@@ -21,6 +22,7 @@ import java.util.UUID;
  * @param latencyMs              tiempo de respuesta extremo a extremo en milisegundos
  * @param redactedItemsCount     cantidad de elementos sensibles (PII o secretos) anonimizados por el Escudo DLP
  * @param tokensSavedCompression cantidad de tokens ahorrados gracias a la compresión y limpieza automática del prompt
+ * @param provider               proveedor de IA efectivo al que se enrutó la petición ({@code GOOGLE_GEMINI}, {@code OPENAI} o {@code ANTHROPIC})
  */
 public record RouterResponse(
         UUID id,
@@ -33,12 +35,14 @@ public record RouterResponse(
         boolean cacheHit,
         long latencyMs,
         int redactedItemsCount,
-        int tokensSavedCompression
+        int tokensSavedCompression,
+        String provider
 ) {
 
     /**
      * Constructor de compatibilidad de 7 argumentos que inicializa {@code cacheHit} en {@code false},
-     * {@code latencyMs} en {@code 0L}, {@code redactedItemsCount} en {@code 0} y {@code tokensSavedCompression} en {@code 0}.
+     * {@code latencyMs} en {@code 0L}, {@code redactedItemsCount} en {@code 0}, {@code tokensSavedCompression} en {@code 0}
+     * y {@code provider} en {@code "GOOGLE_GEMINI"}.
      *
      * @param id                identificador único universal (UUID) del registro de la petición
      * @param userId            identificador del usuario que originó la petición
@@ -56,12 +60,13 @@ public record RouterResponse(
             Integer tokensEstimated,
             String simulatedResponse,
             LocalDateTime createdAt) {
-        this(id, userId, promptContent, modelRouted, tokensEstimated, simulatedResponse, createdAt, false, 0L, 0, 0);
+        this(id, userId, promptContent, modelRouted, tokensEstimated, simulatedResponse, createdAt, false, 0L, 0, 0, "GOOGLE_GEMINI");
     }
 
     /**
      * Constructor de compatibilidad de 8 argumentos que inicializa {@code latencyMs} en {@code 0L},
-     * {@code redactedItemsCount} en {@code 0} y {@code tokensSavedCompression} en {@code 0}.
+     * {@code redactedItemsCount} en {@code 0}, {@code tokensSavedCompression} en {@code 0}
+     * y {@code provider} en {@code "GOOGLE_GEMINI"}.
      *
      * @param id                identificador único universal (UUID) del registro de la petición
      * @param userId            identificador del usuario que originó la petición
@@ -81,11 +86,12 @@ public record RouterResponse(
             String simulatedResponse,
             LocalDateTime createdAt,
             boolean cacheHit) {
-        this(id, userId, promptContent, modelRouted, tokensEstimated, simulatedResponse, createdAt, cacheHit, 0L, 0, 0);
+        this(id, userId, promptContent, modelRouted, tokensEstimated, simulatedResponse, createdAt, cacheHit, 0L, 0, 0, "GOOGLE_GEMINI");
     }
 
     /**
-     * Constructor de compatibilidad de 10 argumentos que inicializa {@code tokensSavedCompression} en {@code 0}.
+     * Constructor de compatibilidad de 10 argumentos que inicializa {@code tokensSavedCompression} en {@code 0}
+     * y {@code provider} en {@code "GOOGLE_GEMINI"}.
      *
      * @param id                 identificador único universal (UUID) del registro de la petición
      * @param userId             identificador del usuario que originó la petición
@@ -109,6 +115,36 @@ public record RouterResponse(
             boolean cacheHit,
             long latencyMs,
             int redactedItemsCount) {
-        this(id, userId, promptContent, modelRouted, tokensEstimated, simulatedResponse, createdAt, cacheHit, latencyMs, redactedItemsCount, 0);
+        this(id, userId, promptContent, modelRouted, tokensEstimated, simulatedResponse, createdAt, cacheHit, latencyMs, redactedItemsCount, 0, "GOOGLE_GEMINI");
+    }
+
+    /**
+     * Constructor de compatibilidad de 11 argumentos que inicializa {@code provider} en {@code "GOOGLE_GEMINI"}.
+     *
+     * @param id                     identificador único universal (UUID) del registro de la petición
+     * @param userId                 identificador del usuario que originó la petición
+     * @param promptContent          contenido íntegro del prompt evaluado
+     * @param modelRouted            nombre del modelo LLM seleccionado por el enrutador de costes
+     * @param tokensEstimated        cantidad estimada de tokens calculada para el prompt
+     * @param simulatedResponse      respuesta real o simulada generada por el motor de enrutamiento
+     * @param createdAt              fecha y hora en la que se registró la petición
+     * @param cacheHit               indicador de acierto en la Caché Semántica
+     * @param latencyMs              tiempo de respuesta extremo a extremo en milisegundos
+     * @param redactedItemsCount     cantidad de elementos sensibles anonimizados por el Escudo DLP
+     * @param tokensSavedCompression cantidad de tokens ahorrados por el Compresor Automático de Prompts
+     */
+    public RouterResponse(
+            UUID id,
+            String userId,
+            String promptContent,
+            String modelRouted,
+            Integer tokensEstimated,
+            String simulatedResponse,
+            LocalDateTime createdAt,
+            boolean cacheHit,
+            long latencyMs,
+            int redactedItemsCount,
+            int tokensSavedCompression) {
+        this(id, userId, promptContent, modelRouted, tokensEstimated, simulatedResponse, createdAt, cacheHit, latencyMs, redactedItemsCount, tokensSavedCompression, "GOOGLE_GEMINI");
     }
 }

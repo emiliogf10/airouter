@@ -133,6 +133,15 @@ export interface UserWalletResponse {
 }
 
 /**
+ * Código de proveedor LLM soportado por el motor de enrutamiento multi-proveedor:
+ * - `'AUTO'`: Selección automática del proveedor más eficiente en coste.
+ * - `'GOOGLE_GEMINI'`: Familia Google Gemini (`gemini-2.5-flash` / `gemini-2.5-pro`).
+ * - `'OPENAI'`: Familia OpenAI (`gpt-4o-mini` / `gpt-4o`).
+ * - `'ANTHROPIC'`: Familia Anthropic Claude (`claude-3-5-haiku` / `claude-3-7-sonnet`).
+ */
+export type LlmProviderCode = 'AUTO' | 'GOOGLE_GEMINI' | 'OPENAI' | 'ANTHROPIC';
+
+/**
  * DTO de entrada que representa una solicitud de evaluación y enrutamiento de un prompt hacia el backend.
  */
 export interface PromptRequest {
@@ -140,6 +149,8 @@ export interface PromptRequest {
   userId: string;
   /** Contenido textual del prompt que se desea evaluar y enviar al LLM (obligatorio, no vacío). */
   prompt: string;
+  /** Proveedor de IA objetivo opcional (`'AUTO'`, `'GOOGLE_GEMINI'`, `'OPENAI'` o `'ANTHROPIC'`). */
+  provider?: LlmProviderCode | string;
 }
 
 /**
@@ -153,7 +164,7 @@ export interface RouterResponse {
   userId: string;
   /** Contenido íntegro del prompt evaluado. */
   promptContent: string;
-  /** Nombre del modelo LLM seleccionado por el enrutador de costes (`gemini-2.5-flash` o `gemini-2.5-pro`). */
+  /** Nombre del modelo LLM seleccionado por el enrutador de costes (`gemini-2.5-flash`, `gpt-4o`, `claude-3-7-sonnet`, etc.). */
   modelRouted: string;
   /** Cantidad estimada de tokens calculada para el prompt. */
   tokensEstimated: number;
@@ -169,6 +180,8 @@ export interface RouterResponse {
   redactedItemsCount?: number;
   /** Cantidad de tokens ahorrados gracias al Compresor Automático de Prompts antes de la inferencia. */
   tokensSavedCompression?: number;
+  /** Proveedor de IA efectivo que procesó la petición (`'GOOGLE_GEMINI'`, `'OPENAI'` o `'ANTHROPIC'`). */
+  provider?: string;
 }
 
 /**

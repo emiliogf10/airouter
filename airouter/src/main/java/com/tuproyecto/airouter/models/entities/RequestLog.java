@@ -106,8 +106,16 @@ public class RequestLog {
     private Integer tokensSavedCompression = 0;
 
     /**
+     * Identificador del proveedor de inteligencia artificial al que pertenece el modelo enrutado
+     * (ej. {@code GOOGLE_GEMINI}, {@code OPENAI} o {@code ANTHROPIC}).
+     */
+    @Builder.Default
+    @Column(name = "provider", nullable = false, length = 40)
+    private String provider = "GOOGLE_GEMINI";
+
+    /**
      * Constructor de compatibilidad de 6 argumentos sin el indicador explícito de acierto
-     * de caché ni métricas de latencia, DLP o compresión, inicializándolos en sus valores por defecto.
+     * de caché ni métricas de latencia, DLP, compresión o proveedor, inicializándolos en sus valores por defecto.
      *
      * @param id identificador único del registro
      * @param userId identificador del usuario
@@ -123,13 +131,13 @@ public class RequestLog {
             String modelRouted,
             Integer tokensEstimated,
             LocalDateTime createdAt) {
-        this(id, userId, promptContent, modelRouted, tokensEstimated, createdAt, Boolean.FALSE, 0L, 0, 0);
+        this(id, userId, promptContent, modelRouted, tokensEstimated, createdAt, Boolean.FALSE, 0L, 0, 0, "GOOGLE_GEMINI");
     }
 
     /**
-     * Constructor de compatibilidad de 7 argumentos sin métricas explícitas de latencia, DLP ni compresión,
-     * inicializando {@code latencyMs} en {@code 0L}, {@code redactedItemsCount} en {@code 0} y
-     * {@code tokensSavedCompression} en {@code 0}.
+     * Constructor de compatibilidad de 7 argumentos sin métricas explícitas de latencia, DLP, compresión ni proveedor,
+     * inicializando {@code latencyMs} en {@code 0L}, {@code redactedItemsCount} en {@code 0},
+     * {@code tokensSavedCompression} en {@code 0} y {@code provider} en {@code "GOOGLE_GEMINI"}.
      *
      * @param id identificador único del registro
      * @param userId identificador del usuario
@@ -147,12 +155,13 @@ public class RequestLog {
             Integer tokensEstimated,
             LocalDateTime createdAt,
             Boolean cacheHit) {
-        this(id, userId, promptContent, modelRouted, tokensEstimated, createdAt, cacheHit, 0L, 0, 0);
+        this(id, userId, promptContent, modelRouted, tokensEstimated, createdAt, cacheHit, 0L, 0, 0, "GOOGLE_GEMINI");
     }
 
     /**
      * Constructor de compatibilidad de 9 argumentos sin la métrica explícita de tokens ahorrados
-     * por compresión, inicializando {@code tokensSavedCompression} en {@code 0}.
+     * por compresión ni proveedor, inicializando {@code tokensSavedCompression} en {@code 0} y
+     * {@code provider} en {@code "GOOGLE_GEMINI"}.
      *
      * @param id identificador único del registro
      * @param userId identificador del usuario
@@ -174,13 +183,53 @@ public class RequestLog {
             Boolean cacheHit,
             Long latencyMs,
             Integer redactedItemsCount) {
-        this(id, userId, promptContent, modelRouted, tokensEstimated, createdAt, cacheHit, latencyMs, redactedItemsCount, 0);
+        this(id, userId, promptContent, modelRouted, tokensEstimated, createdAt, cacheHit, latencyMs, redactedItemsCount, 0, "GOOGLE_GEMINI");
+    }
+
+    /**
+     * Constructor de compatibilidad de 10 argumentos sin el identificador explícito de proveedor,
+     * inicializando {@code provider} en {@code "GOOGLE_GEMINI"}.
+     *
+     * @param id identificador único del registro
+     * @param userId identificador del usuario
+     * @param promptContent contenido íntegro del prompt
+     * @param modelRouted modelo al que se enrutó la petición
+     * @param tokensEstimated cantidad estimada de tokens
+     * @param createdAt fecha y hora de creación
+     * @param cacheHit indicador de acierto en la Caché Semántica
+     * @param latencyMs tiempo de respuesta en milisegundos
+     * @param redactedItemsCount elementos sensibles redactados por el Escudo DLP
+     * @param tokensSavedCompression tokens ahorrados por compresión del prompt
+     */
+    public RequestLog(
+            UUID id,
+            String userId,
+            String promptContent,
+            String modelRouted,
+            Integer tokensEstimated,
+            LocalDateTime createdAt,
+            Boolean cacheHit,
+            Long latencyMs,
+            Integer redactedItemsCount,
+            Integer tokensSavedCompression) {
+        this(
+                id,
+                userId,
+                promptContent,
+                modelRouted,
+                tokensEstimated,
+                createdAt,
+                cacheHit,
+                latencyMs,
+                redactedItemsCount,
+                tokensSavedCompression,
+                "GOOGLE_GEMINI");
     }
 
     /**
      * Asigna automáticamente la fecha y hora de creación y los valores por defecto de
-     * {@code cacheHit}, {@code latencyMs}, {@code redactedItemsCount} y {@code tokensSavedCompression}
-     * antes de insertar el registro en la base de datos si no se han especificado previamente.
+     * {@code cacheHit}, {@code latencyMs}, {@code redactedItemsCount}, {@code tokensSavedCompression}
+     * y {@code provider} antes de insertar el registro en la base de datos si no se han especificado previamente.
      */
     @PrePersist
     protected void onCreate() {
@@ -198,6 +247,9 @@ public class RequestLog {
         }
         if (this.tokensSavedCompression == null) {
             this.tokensSavedCompression = 0;
+        }
+        if (this.provider == null || this.provider.isBlank()) {
+            this.provider = "GOOGLE_GEMINI";
         }
     }
 

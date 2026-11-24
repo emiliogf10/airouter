@@ -56,14 +56,54 @@ import org.springframework.transaction.annotation.Transactional;
 public class RouterService {
 
     /**
-     * Identificador del modelo rápido y de bajo coste para prompts sencillos o cortos.
+     * Identificador del modo de selección automática del proveedor más rentable (por defecto {@link #PROVIDER_GOOGLE_GEMINI}).
+     */
+    public static final String PROVIDER_AUTO = "AUTO";
+
+    /**
+     * Identificador del proveedor oficial Google Gemini.
+     */
+    public static final String PROVIDER_GOOGLE_GEMINI = "GOOGLE_GEMINI";
+
+    /**
+     * Identificador del proveedor OpenAI.
+     */
+    public static final String PROVIDER_OPENAI = "OPENAI";
+
+    /**
+     * Identificador del proveedor Anthropic Claude.
+     */
+    public static final String PROVIDER_ANTHROPIC = "ANTHROPIC";
+
+    /**
+     * Identificador del modelo rápido y de bajo coste de Google Gemini para prompts sencillos o cortos.
      */
     public static final String MODEL_FAST = "gemini-2.5-flash";
 
     /**
-     * Identificador del modelo avanzado de razonamiento para prompts largos o complejos.
+     * Identificador del modelo avanzado de razonamiento de Google Gemini para prompts largos o complejos.
      */
     public static final String MODEL_PRO = "gemini-2.5-pro";
+
+    /**
+     * Identificador del modelo rápido y económico de OpenAI para prompts sencillos o cortos.
+     */
+    public static final String MODEL_OPENAI_FAST = "gpt-4o-mini";
+
+    /**
+     * Identificador del modelo avanzado de razonamiento de OpenAI para prompts largos o complejos.
+     */
+    public static final String MODEL_OPENAI_PRO = "gpt-4o";
+
+    /**
+     * Identificador del modelo rápido y económico de Anthropic para prompts sencillos o cortos.
+     */
+    public static final String MODEL_ANTHROPIC_FAST = "claude-3-5-haiku";
+
+    /**
+     * Identificador del modelo avanzado de razonamiento de Anthropic para prompts largos o complejos.
+     */
+    public static final String MODEL_ANTHROPIC_PRO = "claude-3-7-sonnet";
 
     /**
      * Umbral máximo de tokens estimados para considerar un prompt como ligero.
@@ -153,15 +193,39 @@ public class RouterService {
 
     /**
      * Tarifa de referencia en dólares estadounidenses (USD) por cada millón de tokens
-     * procesados por el modelo económico ({@link #MODEL_FAST}).
+     * procesados por el modelo económico de Google Gemini ({@link #MODEL_FAST}).
      */
     public static final BigDecimal COST_PER_MILLION_TOKENS_FAST = new BigDecimal("0.15");
 
     /**
      * Tarifa de referencia en dólares estadounidenses (USD) por cada millón de tokens
-     * procesados por el modelo avanzado ({@link #MODEL_PRO}).
+     * procesados por el modelo avanzado de Google Gemini ({@link #MODEL_PRO}).
      */
     public static final BigDecimal COST_PER_MILLION_TOKENS_PRO = new BigDecimal("1.25");
+
+    /**
+     * Tarifa de referencia en dólares estadounidenses (USD) por cada millón de tokens
+     * procesados por el modelo económico de OpenAI ({@link #MODEL_OPENAI_FAST}).
+     */
+    public static final BigDecimal COST_PER_MILLION_TOKENS_OPENAI_FAST = new BigDecimal("0.15");
+
+    /**
+     * Tarifa de referencia en dólares estadounidenses (USD) por cada millón de tokens
+     * procesados por el modelo avanzado de OpenAI ({@link #MODEL_OPENAI_PRO}).
+     */
+    public static final BigDecimal COST_PER_MILLION_TOKENS_OPENAI_PRO = new BigDecimal("2.50");
+
+    /**
+     * Tarifa de referencia en dólares estadounidenses (USD) por cada millón de tokens
+     * procesados por el modelo económico de Anthropic ({@link #MODEL_ANTHROPIC_FAST}).
+     */
+    public static final BigDecimal COST_PER_MILLION_TOKENS_ANTHROPIC_FAST = new BigDecimal("0.80");
+
+    /**
+     * Tarifa de referencia en dólares estadounidenses (USD) por cada millón de tokens
+     * procesados por el modelo avanzado de Anthropic ({@link #MODEL_ANTHROPIC_PRO}).
+     */
+    public static final BigDecimal COST_PER_MILLION_TOKENS_ANTHROPIC_PRO = new BigDecimal("3.00");
 
     /**
      * Factor divisor equivalente a un millón de tokens para el cálculo de tarifas unitarias.
@@ -467,6 +531,7 @@ public class RouterService {
     public RouterResponse routePrompt(PromptRequest request, String clientApiKey) {
         long startNanos = System.nanoTime();
         validateRequest(request);
+        String effectiveProvider = resolveEffectiveProvider(request.provider());
 
         String normalizedUserId = request.userId().trim();
         validateManagedClientApiKeyIfPresent(clientApiKey, normalizedUserId);
@@ -491,8 +556,8 @@ public class RouterService {
         }
 
         int tokensEstimated = estimateTokens(promptContent);
-        String initialModel = selectModel(promptContent, tokensEstimated);
-        String firewallModel = applyBudgetFirewallAndSelectModel(normalizedUserId, initialModel);
+        String initialModel = selectModelForProvider(promptContent, tokensEstimated, effectiveProvider);
+        String firewallModel = applyBudgetFirewallAndSelectModel(normalizedUserId, initialModel, effectiveProvider);
         boolean downgradedByBudget = !firewallModel.equals(initialModel);
 
         boolean hasExternalByokKey = clientApiKey != null
@@ -500,8 +565,10 @@ public class RouterService {
                 && !clientApiKey.trim().startsWith(MANAGED_API_KEY_PREFIX);
 
         String normalizedPrompt = normalizePromptForCache(promptContent);
+        String cacheKey = effectiveProvider + "::" + normalizedPrompt;
         Optional<CachedPromptEntry> cachedEntryOpt = findCachedEntry(
                 normalizedPrompt,
+                effectiveProvider,
                 normalizedUserId,
                 hasExternalByokKey
         );
@@ -513,27 +580,29 @@ public class RouterService {
         if (cachedEntryOpt.isPresent()) {
             isCacheHit = true;
             CachedPromptEntry cachedEntry = cachedEntryOpt.get();
-            selectedModel = downgradedByBudget ? MODEL_FAST : cachedEntry.modelRouted();
+            selectedModel = downgradedByBudget ? getFastModelForProvider(effectiveProvider) : cachedEntry.modelRouted();
             finalResponseText = (cachedEntry.responseText() != null && !cachedEntry.responseText().isBlank())
                     ? cachedEntry.responseText()
                     : buildSimulatedResponse(selectedModel, tokensEstimated);
 
-            log.info("Caché Semántica [HIT - $0.000000 USD]: Petición del usuario '{}' resuelta desde caché [modelo: '{}', tokens estimados: {}].",
-                    normalizedUserId, selectedModel, tokensEstimated);
+            log.info("Caché Semántica [HIT - $0.000000 USD]: Petición del usuario '{}' resuelta desde caché [proveedor: '{}', modelo: '{}', tokens estimados: {}].",
+                    normalizedUserId, effectiveProvider, selectedModel, tokensEstimated);
         } else {
             isCacheHit = false;
             selectedModel = firewallModel;
 
             evaluateAndDeductPrepaidWalletIfEnforced(normalizedUserId, selectedModel, tokensEstimated, false);
 
-            log.info("Enrutando petición del usuario '{}' [tokens estimados: {}] -> modelo seleccionado: {}",
-                    normalizedUserId, tokensEstimated, selectedModel);
+            log.info("Enrutando petición del usuario '{}' [proveedor: '{}', tokens estimados: {}] -> modelo seleccionado: {}",
+                    normalizedUserId, effectiveProvider, tokensEstimated, selectedModel);
 
-            finalResponseText = resolveModelResponse(selectedModel, promptContent, sanitizedPrompt, tokensEstimated, clientApiKey);
+            finalResponseText = PROVIDER_GOOGLE_GEMINI.equals(effectiveProvider)
+                    ? resolveModelResponse(selectedModel, promptContent, sanitizedPrompt, tokensEstimated, clientApiKey)
+                    : buildSimulatedResponse(selectedModel, tokensEstimated);
             boolean isSimulatedResponse = finalResponseText == null
                     || finalResponseText.startsWith("[Simulación AI Cost Router]");
             promptCache.put(
-                    normalizedPrompt,
+                    cacheKey,
                     new CachedPromptEntry(
                             selectedModel,
                             tokensEstimated,
@@ -556,6 +625,7 @@ public class RouterService {
                 .latencyMs(latencyMs)
                 .redactedItemsCount(redactedItemsCount)
                 .tokensSavedCompression(tokensSavedCompression)
+                .provider(effectiveProvider)
                 .build();
 
         RequestLog savedEntity = requestLogRepository.save(entityToSave);
@@ -680,33 +750,27 @@ public class RouterService {
     }
 
     /**
-     * Busca si existe una petición previa equivalente en el historial de base de datos o en la caché
-     * de la sesión actual, aplicando aislamiento de seguridad entre respuestas simuladas y respuestas
+     * Busca si existe una petición previa equivalente para el mismo proveedor en el historial de base de datos
+     * o en la caché de la sesión actual, aplicando aislamiento de seguridad entre respuestas simuladas y respuestas
      * privadas obtenidas mediante claves BYOK reales ({@code [MEDIUM-02]}).
      *
-     * <ul>
-     *   <li>Si la petición actual aporta una clave BYOK externa ({@code hasExternalByokKey == true}) y la
-     *       entrada en caché proviene de una simulación o de otro usuario, no devuelve acierto de caché
-     *       para permitir que el cliente BYOK invoque a Google Gemini.</li>
-     *   <li>Si la entrada en memoria contiene una respuesta real generada con la clave privada de un
-     *       usuario distinto ({@code !currentUserId.equals(memoryEntry.ownerUserId())}), no reutiliza
-     *       el texto privado de ese otro usuario.</li>
-     * </ul>
-     *
      * @param normalizedPrompt   prompt ya normalizado mediante {@link #normalizePromptForCache(String)}
+     * @param effectiveProvider  proveedor efectivo normalizado ({@code GOOGLE_GEMINI}, {@code OPENAI} o {@code ANTHROPIC})
      * @param currentUserId      identificador normalizado del usuario que realiza la consulta actual
      * @param hasExternalByokKey {@code true} si la petición actual incluye una clave externa BYOK
      * @return {@link Optional} con los datos de la entrada en caché si existe coincidencia autorizada
      */
     private Optional<CachedPromptEntry> findCachedEntry(
             String normalizedPrompt,
+            String effectiveProvider,
             String currentUserId,
             boolean hasExternalByokKey) {
         if (normalizedPrompt == null || normalizedPrompt.isBlank()) {
             return Optional.empty();
         }
 
-        CachedPromptEntry memoryEntry = promptCache.get(normalizedPrompt);
+        String cacheKey = effectiveProvider + "::" + normalizedPrompt;
+        CachedPromptEntry memoryEntry = promptCache.get(cacheKey);
         if (hasExternalByokKey) {
             if (memoryEntry == null
                     || memoryEntry.simulatedResponse()
@@ -720,8 +784,11 @@ public class RouterService {
             for (RequestLog logEntry : existingLogs) {
                 if (logEntry != null
                         && logEntry.getPromptContent() != null
+                        && effectiveProvider.equals(resolveLogProvider(logEntry))
                         && normalizedPrompt.equals(normalizePromptForCache(logEntry.getPromptContent()))) {
-                    String modelRouted = logEntry.getModelRouted() != null ? logEntry.getModelRouted() : MODEL_FAST;
+                    String modelRouted = logEntry.getModelRouted() != null
+                            ? logEntry.getModelRouted()
+                            : getFastModelForProvider(effectiveProvider);
                     Integer tokens = logEntry.getTokensEstimated() != null ? logEntry.getTokensEstimated() : 1;
 
                     if (memoryEntry != null) {
@@ -900,15 +967,20 @@ public class RouterService {
      *   <li><b>Regla del 100% (Hard Cap):</b> Si {@code currentSpendUsd >= maxBudgetUsd}, lanza
      *       {@link BudgetExceededException} (HTTP 402 Payment Required).</li>
      *   <li><b>Regla del 80% (Auto-Downgrade):</b> Si el consumo alcanza o supera el 80% y
-     *       {@code autoDowngradeEnabled} es {@code true}, fuerza el modelo {@link #MODEL_FAST}.</li>
+     *       {@code autoDowngradeEnabled} es {@code true}, fuerza el modelo económico rápido
+     *       del proveedor efectivo ({@link #getFastModelForProvider(String)}).</li>
      * </ul>
      *
-     * @param userId       identificador normalizado del usuario
-     * @param initialModel modelo inicialmente seleccionado por la heurística de complejidad
-     * @return modelo definitivo a utilizar ({@code initialModel} o {@link #MODEL_FAST} si aplica auto-downgrade)
+     * @param userId            identificador normalizado del usuario
+     * @param initialModel      modelo inicialmente seleccionado por la heurística de complejidad
+     * @param effectiveProvider proveedor de IA efectivo para la petición
+     * @return modelo definitivo a utilizar ({@code initialModel} o el modelo rápido del proveedor si aplica auto-downgrade)
      * @throws BudgetExceededException si el gasto acumulado iguala o supera el presupuesto máximo
      */
-    private String applyBudgetFirewallAndSelectModel(String userId, String initialModel) {
+    private String applyBudgetFirewallAndSelectModel(
+            String userId,
+            String initialModel,
+            String effectiveProvider) {
         if (userBudgetRepository == null) {
             return initialModel;
         }
@@ -934,11 +1006,12 @@ public class RouterService {
         boolean autoDowngrade = budget.getAutoDowngradeEnabled() == null || budget.getAutoDowngradeEnabled();
 
         if (usagePercentage >= BUDGET_DOWNGRADE_THRESHOLD_PERCENT && autoDowngrade) {
-            if (!MODEL_FAST.equals(initialModel)) {
+            String fastModel = getFastModelForProvider(effectiveProvider);
+            if (!fastModel.equals(initialModel)) {
                 log.info("Cortafuegos FinOps [AUTO-DOWNGRADE >= 80%]: Usuario '{}' al {}% de su presupuesto. Degradando modelo '{}' -> '{}'.",
-                        userId, usagePercentage, initialModel, MODEL_FAST);
+                        userId, usagePercentage, initialModel, fastModel);
             }
-            return MODEL_FAST;
+            return fastModel;
         }
 
         return initialModel;
@@ -1373,9 +1446,7 @@ public class RouterService {
                 );
             }
 
-            BigDecimal ratePerMillion = MODEL_PRO.equals(selectedModel)
-                    ? COST_PER_MILLION_TOKENS_PRO
-                    : COST_PER_MILLION_TOKENS_FAST;
+            BigDecimal ratePerMillion = getCostPerMillionTokensForModel(selectedModel);
             BigDecimal requestCostUsd = BigDecimal.valueOf(tokensEstimated)
                     .multiply(ratePerMillion)
                     .divide(ONE_MILLION_TOKENS, INTERNAL_CALCULATION_SCALE, RoundingMode.HALF_UP)
@@ -1607,12 +1678,12 @@ public class RouterService {
         long proModelRequests = 0L;
         long fastModelTokens = 0L;
         long proModelTokens = 0L;
-        long billedFastModelTokens = 0L;
-        long billedProModelTokens = 0L;
         long cacheHits = 0L;
         long totalLatencyMs = 0L;
         long totalRedactedItems = 0L;
         long totalTokensSavedCompression = 0L;
+        BigDecimal rawActualCost = BigDecimal.ZERO;
+        BigDecimal rawBaselineProCost = BigDecimal.ZERO;
 
         for (RequestLog logEntry : logs) {
             long tokens = logEntry.getTokensEstimated() != null ? logEntry.getTokensEstimated() : 0L;
@@ -1630,34 +1701,33 @@ public class RouterService {
                 totalTokensSavedCompression += logEntry.getTokensSavedCompression();
             }
 
-            if (MODEL_FAST.equals(logEntry.getModelRouted())) {
-                fastModelRequests++;
-                fastModelTokens += tokens;
-                if (!isCacheHit) {
-                    billedFastModelTokens += tokens;
+            String modelRouted = logEntry.getModelRouted();
+            if (modelRouted != null && !modelRouted.isBlank()) {
+                if (isProTierModel(modelRouted)) {
+                    proModelRequests++;
+                    proModelTokens += tokens;
+                } else {
+                    fastModelRequests++;
+                    fastModelTokens += tokens;
                 }
-            } else if (MODEL_PRO.equals(logEntry.getModelRouted())) {
-                proModelRequests++;
-                proModelTokens += tokens;
+
                 if (!isCacheHit) {
-                    billedProModelTokens += tokens;
+                    BigDecimal actualRate = getCostPerMillionTokensForModel(modelRouted);
+                    BigDecimal entryActualCost = BigDecimal.valueOf(tokens)
+                            .multiply(actualRate)
+                            .divide(ONE_MILLION_TOKENS, INTERNAL_CALCULATION_SCALE, RoundingMode.HALF_UP);
+                    rawActualCost = rawActualCost.add(entryActualCost);
                 }
+
+                BigDecimal baselineRate = getBaselineProRateForModel(modelRouted, logEntry.getProvider());
+                BigDecimal entryBaselineCost = BigDecimal.valueOf(tokens)
+                        .multiply(baselineRate)
+                        .divide(ONE_MILLION_TOKENS, INTERNAL_CALCULATION_SCALE, RoundingMode.HALF_UP);
+                rawBaselineProCost = rawBaselineProCost.add(entryBaselineCost);
             }
         }
 
         long totalTokensEstimated = fastModelTokens + proModelTokens;
-
-        BigDecimal rawFastCost = BigDecimal.valueOf(billedFastModelTokens)
-                .multiply(COST_PER_MILLION_TOKENS_FAST)
-                .divide(ONE_MILLION_TOKENS, INTERNAL_CALCULATION_SCALE, RoundingMode.HALF_UP);
-        BigDecimal rawProCost = BigDecimal.valueOf(billedProModelTokens)
-                .multiply(COST_PER_MILLION_TOKENS_PRO)
-                .divide(ONE_MILLION_TOKENS, INTERNAL_CALCULATION_SCALE, RoundingMode.HALF_UP);
-
-        BigDecimal rawActualCost = rawFastCost.add(rawProCost);
-        BigDecimal rawBaselineProCost = BigDecimal.valueOf(totalTokensEstimated)
-                .multiply(COST_PER_MILLION_TOKENS_PRO)
-                .divide(ONE_MILLION_TOKENS, INTERNAL_CALCULATION_SCALE, RoundingMode.HALF_UP);
 
         BigDecimal estimatedActualCostUsd = rawActualCost.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
         BigDecimal estimatedBaselineProCostUsd = rawBaselineProCost.setScale(COST_DECIMAL_SCALE, RoundingMode.HALF_UP);
@@ -1732,27 +1802,154 @@ public class RouterService {
     }
 
     /**
-     * Selecciona el modelo LLM más adecuado en función del volumen de tokens estimados
+     * Selecciona el modelo LLM más adecuado de Google Gemini en función del volumen de tokens estimados
      * y la presencia de palabras clave de alta complejidad semántica.
-     *
-     * <p>Se elige el modelo avanzado ({@link #MODEL_PRO}) cuando los tokens estimados superan
-     * el umbral {@link #TOKEN_THRESHOLD} ({@code > 50}) o cuando el texto contiene términos
-     * complejos como {@code "arquitectura"}, {@code "refactorizar"}, {@code "optimizar"} o
-     * {@code "analizar en profundidad"}. En caso contrario, se selecciona el modelo económico
-     * y rápido ({@link #MODEL_FAST}).</p>
      *
      * @param prompt          contenido textual del prompt
      * @param tokensEstimated cantidad de tokens previamente estimada para el prompt
      * @return identificador del modelo seleccionado ({@link #MODEL_FAST} o {@link #MODEL_PRO})
      */
     public String selectModel(String prompt, int tokensEstimated) {
-        if (tokensEstimated > TOKEN_THRESHOLD) {
-            return MODEL_PRO;
+        return selectModelForProvider(prompt, tokensEstimated, PROVIDER_GOOGLE_GEMINI);
+    }
+
+    /**
+     * Resuelve y valida el proveedor efectivo de IA a partir del valor solicitado en la petición.
+     *
+     * <p>Si el proveedor es {@code null}, está en blanco o es {@code "AUTO"} (sin importar mayúsculas),
+     * el motor selecciona automáticamente el proveedor más rentable ({@link #PROVIDER_GOOGLE_GEMINI}).
+     * Si se especifica {@code GOOGLE_GEMINI}, {@code OPENAI} o {@code ANTHROPIC}, devuelve el código
+     * normalizado en mayúsculas. Cualquier otro valor lanza {@link InvalidPromptException}.</p>
+     *
+     * @param requestedProvider proveedor solicitado opcionalmente en {@link PromptRequest#provider()}
+     * @return proveedor efectivo normalizado ({@code GOOGLE_GEMINI}, {@code OPENAI} o {@code ANTHROPIC})
+     * @throws InvalidPromptException si el proveedor especificado no está soportado
+     */
+    public String resolveEffectiveProvider(String requestedProvider) {
+        if (requestedProvider == null || requestedProvider.isBlank()) {
+            return PROVIDER_GOOGLE_GEMINI;
         }
-        if (prompt != null && containsComplexKeyword(prompt)) {
-            return MODEL_PRO;
+        String normalized = requestedProvider.trim().toUpperCase(Locale.ROOT);
+        if (PROVIDER_AUTO.equals(normalized) || PROVIDER_GOOGLE_GEMINI.equals(normalized)) {
+            return PROVIDER_GOOGLE_GEMINI;
+        }
+        if (PROVIDER_OPENAI.equals(normalized) || PROVIDER_ANTHROPIC.equals(normalized)) {
+            return normalized;
+        }
+        throw new InvalidPromptException(
+                "Proveedor de IA no soportado: '" + requestedProvider.trim()
+                        + "'. Valores permitidos: AUTO, GOOGLE_GEMINI, OPENAI, ANTHROPIC.");
+    }
+
+    /**
+     * Selecciona el modelo rápido o avanzado correspondiente al proveedor efectivo según la heurística
+     * de complejidad del prompt ({@code tokensEstimated > 50} o presencia de palabras clave complejas).
+     *
+     * @param prompt            contenido textual del prompt
+     * @param tokensEstimated   cantidad de tokens estimados
+     * @param effectiveProvider proveedor de IA efectivo ({@code GOOGLE_GEMINI}, {@code OPENAI} o {@code ANTHROPIC})
+     * @return identificador del modelo seleccionado para el proveedor indicado
+     */
+    public String selectModelForProvider(String prompt, int tokensEstimated, String effectiveProvider) {
+        boolean isComplex = tokensEstimated > TOKEN_THRESHOLD
+                || (prompt != null && containsComplexKeyword(prompt));
+        if (PROVIDER_OPENAI.equals(effectiveProvider)) {
+            return isComplex ? MODEL_OPENAI_PRO : MODEL_OPENAI_FAST;
+        }
+        if (PROVIDER_ANTHROPIC.equals(effectiveProvider)) {
+            return isComplex ? MODEL_ANTHROPIC_PRO : MODEL_ANTHROPIC_FAST;
+        }
+        return isComplex ? MODEL_PRO : MODEL_FAST;
+    }
+
+    /**
+     * Devuelve el modelo económico rápido asociado a un proveedor efectivo (empleado en reglas de
+     * Auto-Downgrade al 80% de presupuesto FinOps).
+     *
+     * @param effectiveProvider proveedor de IA efectivo
+     * @return {@link #MODEL_OPENAI_FAST}, {@link #MODEL_ANTHROPIC_FAST} o {@link #MODEL_FAST}
+     */
+    public String getFastModelForProvider(String effectiveProvider) {
+        if (PROVIDER_OPENAI.equals(effectiveProvider)) {
+            return MODEL_OPENAI_FAST;
+        }
+        if (PROVIDER_ANTHROPIC.equals(effectiveProvider)) {
+            return MODEL_ANTHROPIC_FAST;
         }
         return MODEL_FAST;
+    }
+
+    /**
+     * Determina si un modelo enrutado pertenece al nivel avanzado de razonamiento (Pro / Sonnet / GPT-4o).
+     *
+     * @param modelRouted nombre del modelo enrutado
+     * @return {@code true} si es {@link #MODEL_PRO}, {@link #MODEL_OPENAI_PRO} o {@link #MODEL_ANTHROPIC_PRO}
+     */
+    public boolean isProTierModel(String modelRouted) {
+        return MODEL_PRO.equals(modelRouted)
+                || MODEL_OPENAI_PRO.equals(modelRouted)
+                || MODEL_ANTHROPIC_PRO.equals(modelRouted);
+    }
+
+    /**
+     * Obtiene la tarifa oficial en USD por millón de tokens para cualquier modelo soportado por el Gateway.
+     *
+     * @param modelRouted identificador del modelo enrutado
+     * @return tarifa en USD por millón de tokens
+     */
+    public BigDecimal getCostPerMillionTokensForModel(String modelRouted) {
+        if (MODEL_PRO.equals(modelRouted)) {
+            return COST_PER_MILLION_TOKENS_PRO;
+        }
+        if (MODEL_OPENAI_FAST.equals(modelRouted)) {
+            return COST_PER_MILLION_TOKENS_OPENAI_FAST;
+        }
+        if (MODEL_OPENAI_PRO.equals(modelRouted)) {
+            return COST_PER_MILLION_TOKENS_OPENAI_PRO;
+        }
+        if (MODEL_ANTHROPIC_FAST.equals(modelRouted)) {
+            return COST_PER_MILLION_TOKENS_ANTHROPIC_FAST;
+        }
+        if (MODEL_ANTHROPIC_PRO.equals(modelRouted)) {
+            return COST_PER_MILLION_TOKENS_ANTHROPIC_PRO;
+        }
+        return COST_PER_MILLION_TOKENS_FAST;
+    }
+
+    /**
+     * Obtiene la tarifa base de referencia del modelo Pro del proveedor correspondiente para calcular
+     * el coste hipotético sin optimización ({@code estimatedBaselineProCostUsd}).
+     *
+     * @param modelRouted identificador del modelo enrutado
+     * @param provider    identificador del proveedor persistido en el registro
+     * @return tarifa Pro de referencia en USD por millón de tokens para el proveedor del registro
+     */
+    public BigDecimal getBaselineProRateForModel(String modelRouted, String provider) {
+        if (PROVIDER_OPENAI.equals(provider)
+                || MODEL_OPENAI_FAST.equals(modelRouted)
+                || MODEL_OPENAI_PRO.equals(modelRouted)) {
+            return COST_PER_MILLION_TOKENS_OPENAI_PRO;
+        }
+        if (PROVIDER_ANTHROPIC.equals(provider)
+                || MODEL_ANTHROPIC_FAST.equals(modelRouted)
+                || MODEL_ANTHROPIC_PRO.equals(modelRouted)) {
+            return COST_PER_MILLION_TOKENS_ANTHROPIC_PRO;
+        }
+        return COST_PER_MILLION_TOKENS_PRO;
+    }
+
+    /**
+     * Normaliza el proveedor almacenado en un registro {@link RequestLog}, devolviendo
+     * {@link #PROVIDER_GOOGLE_GEMINI} por retrocompatibilidad si el campo es nulo o está vacío.
+     *
+     * @param entity entidad {@link RequestLog} a inspeccionar
+     * @return proveedor normalizado en mayúsculas
+     */
+    private String resolveLogProvider(RequestLog entity) {
+        if (entity != null && entity.getProvider() != null && !entity.getProvider().isBlank()) {
+            return entity.getProvider().trim().toUpperCase(Locale.ROOT);
+        }
+        return PROVIDER_GOOGLE_GEMINI;
     }
 
     /**
@@ -1840,7 +2037,8 @@ public class RouterService {
                 Boolean.TRUE.equals(entity.getCacheHit()),
                 entity.getLatencyMs() != null ? entity.getLatencyMs() : 0L,
                 entity.getRedactedItemsCount() != null ? entity.getRedactedItemsCount() : 0,
-                entity.getTokensSavedCompression() != null ? entity.getTokensSavedCompression() : 0
+                entity.getTokensSavedCompression() != null ? entity.getTokensSavedCompression() : 0,
+                resolveLogProvider(entity)
         );
     }
 

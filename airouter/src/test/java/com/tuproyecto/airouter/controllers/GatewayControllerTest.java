@@ -729,4 +729,48 @@ class GatewayControllerTest {
                 .andExpect(jsonPath("$.totalRequests", is(1)))
                 .andExpect(jsonPath("$.totalTokensSavedCompression", greaterThanOrEqualTo(1)));
     }
+
+    /**
+     * Verifica de extremo a extremo el Enrutamiento Multi-Proveedor en {@code POST /api/v1/router/prompt}:
+     * al especificar {@code "provider": "OPENAI"} en un prompt simple devuelve {@code gpt-4o-mini}, y al
+     * especificar {@code "provider": "ANTHROPIC"} en un prompt complejo de arquitectura devuelve
+     * {@code claude-3-7-sonnet}.
+     *
+     * @throws Exception si ocurre un error durante las peticiones simuladas
+     */
+    @Test
+    @DisplayName("Multi-Proveedor E2E: POST /prompt debe enrutar a gpt-4o-mini con OPENAI simple y a claude-3-7-sonnet con ANTHROPIC complejo")
+    void shouldRoutePromptToOpenAiAndAnthropicModelsEndToEnd() throws Exception {
+        String openAiSimplePayload = """
+                {
+                    "userId": "multi-e2e-user",
+                    "prompt": "Hola OpenAI, dame un consejo breve",
+                    "provider": "OPENAI"
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/router/prompt")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(openAiSimplePayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId", is("multi-e2e-user")))
+                .andExpect(jsonPath("$.provider", is(RouterService.PROVIDER_OPENAI)))
+                .andExpect(jsonPath("$.modelRouted", is(RouterService.MODEL_OPENAI_FAST)));
+
+        String anthropicComplexPayload = """
+                {
+                    "userId": "multi-e2e-user",
+                    "prompt": "Necesito refactorizar y optimizar la arquitectura del sistema con Claude",
+                    "provider": "ANTHROPIC"
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/router/prompt")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(anthropicComplexPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId", is("multi-e2e-user")))
+                .andExpect(jsonPath("$.provider", is(RouterService.PROVIDER_ANTHROPIC)))
+                .andExpect(jsonPath("$.modelRouted", is(RouterService.MODEL_ANTHROPIC_PRO)));
+    }
 }

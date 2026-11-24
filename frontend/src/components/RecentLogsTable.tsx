@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { CurrencyCode, RouterResponse } from '../types/router';
 import { exportLogsToCsv } from '../utils/csv';
+import { formatProviderLabel, isAdvancedModel } from '../utils/currency';
 
 /**
  * Propiedades del componente de tabla de historial reciente (`RecentLogsTable`).
@@ -182,7 +183,7 @@ export const RecentLogsTable: React.FC<RecentLogsTableProps> = ({
             </thead>
             <tbody className="divide-y divide-white/5 text-sm">
               {logs.map((log) => {
-                const isPro = log.modelRouted === 'gemini-2.5-pro';
+                const isPro = isAdvancedModel(log.modelRouted);
                 return (
                   <tr
                     key={log.id}
@@ -203,6 +204,12 @@ export const RecentLogsTable: React.FC<RecentLogsTableProps> = ({
                     </td>
                     <td className="py-4 px-6 whitespace-nowrap">
                       <div className="inline-flex flex-wrap items-center gap-1.5">
+                        <span
+                          data-testid={`log-provider-${log.id}`}
+                          className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-zinc-800/90 text-zinc-300 border border-white/10"
+                        >
+                          {formatProviderLabel(log.provider)}
+                        </span>
                         <span
                           className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border ${
                             isPro

@@ -19,6 +19,8 @@ import {
   calculateBaselineProCostUsd,
   calculateLogCostUsd,
   formatCurrency,
+  formatProviderLabel,
+  isAdvancedModel,
 } from '../utils/currency';
 
 /**
@@ -294,9 +296,11 @@ export const LogInspectorDrawer: React.FC<LogInspectorDrawerProps> = ({
   const actualCostUsd = log
     ? calculateLogCostUsd(log.modelRouted, log.tokensEstimated, log.cacheHit)
     : 0;
-  const baselineProCostUsd = log ? calculateBaselineProCostUsd(log.tokensEstimated) : 0;
+  const baselineProCostUsd = log
+    ? calculateBaselineProCostUsd(log.tokensEstimated, log.modelRouted, log.provider)
+    : 0;
   const savedCostUsd = Math.max(0, Number((baselineProCostUsd - actualCostUsd).toFixed(6)));
-  const isProModel = log?.modelRouted === 'gemini-2.5-pro';
+  const isProModel = isAdvancedModel(log?.modelRouted);
 
   return (
     <dialog
@@ -375,6 +379,9 @@ export const LogInspectorDrawer: React.FC<LogInspectorDrawerProps> = ({
                   Modelo y Caché
                 </span>
                 <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                  <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-zinc-800/90 text-zinc-300 border border-white/10">
+                    {formatProviderLabel(log.provider)}
+                  </span>
                   <span className="text-xs font-semibold text-zinc-100">
                     {log.modelRouted}
                   </span>
