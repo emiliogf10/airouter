@@ -23,6 +23,8 @@ Cuando una empresa o desarrollador envía consultas (*prompts*) a modelos de Int
    * Puedes usar la aplicación gratis en **Modo Simulación** o pegar tu propia API Key de **Google AI Studio (`AIzaSy...`)** para recibir respuestas reales generadas en vivo por Google Gemini.
 5. **Escudo DLP de Privacidad (*PII / Secret Redaction*) y Telemetría de Latencia (`latencyMs`):**
    * Antes de que tu consulta salga hacia un proveedor externo o se guarde en el historial, el Gateway detecta y anonimiza automáticamente correos electrónicos (`[EMAIL_REDACTED]`), tarjetas bancarias (`[CARD_REDACTED]`), DNI/NIE (`[ID_REDACTED]`), teléfonos (`[PHONE_REDACTED]`) y claves API filtradas (`[SECRET_REDACTED]`), mostrando el número de datos protegidos y los milisegundos exactos (`ms`) que tardó la respuesta.
+6. **Compresor Automático de Prompts (*Prompt Trimming & Token Optimizer*):**
+   * Compacta espacios redundantes, bloques de saltos de línea repetidos y signos de puntuación duplicados antes de enviar la consulta al LLM, registrando los tokens adicionales ahorrados (`-X tok. comprimidos`) en las tarjetas KPI, en el simulador, en la tabla de historial y en el visor de detalle.
 
 ---
 

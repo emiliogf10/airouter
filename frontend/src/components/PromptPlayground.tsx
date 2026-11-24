@@ -93,9 +93,8 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
     setErrorState(null);
 
     const trimmedUser = userId.trim();
-    const trimmedPrompt = prompt.trim();
 
-    if (!trimmedUser || !trimmedPrompt) {
+    if (!trimmedUser || !prompt.trim()) {
       setErrorState({
         message: 'Por favor, completa tanto el identificador de usuario como el contenido del prompt.',
         status: 400,
@@ -106,7 +105,7 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
     setIsSubmitting(true);
     try {
       const result = await sendPrompt(
-        { userId: trimmedUser, prompt: trimmedPrompt },
+        { userId: trimmedUser, prompt },
         apiKey,
       );
       setLastResult(result);
@@ -343,6 +342,14 @@ export const PromptPlayground: React.FC<PromptPlaygroundProps> = ({
                   <ShieldCheck className="w-3 h-3" aria-hidden="true" />
                   DLP: {lastResult.redactedItemsCount}{' '}
                   {lastResult.redactedItemsCount === 1 ? 'dato protegido' : 'datos protegidos'}
+                </span>
+              )}
+              {(lastResult.tokensSavedCompression ?? 0) > 0 && (
+                <span
+                  data-testid="routed-compression-badge"
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-500/15 text-indigo-300 border border-indigo-500/30"
+                >
+                  -{lastResult.tokensSavedCompression} tok. comprimidos
                 </span>
               )}
               {lastResult.cacheHit && (

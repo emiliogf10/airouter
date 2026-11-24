@@ -89,9 +89,19 @@ export const StatsCards: React.FC<StatsCardsProps> = ({
           </span>
         }
         footer={
-          <div className="flex items-center justify-between text-xs text-zinc-400">
-            <span>Flash: {stats.fastModelTokens.toLocaleString('es-ES')} tok.</span>
-            <span>Pro: {stats.proModelTokens.toLocaleString('es-ES')} tok.</span>
+          <div className="space-y-1 text-xs text-zinc-400">
+            <div className="flex items-center justify-between">
+              <span>Flash: {stats.fastModelTokens.toLocaleString('es-ES')} tok.</span>
+              <span>Pro: {stats.proModelTokens.toLocaleString('es-ES')} tok.</span>
+            </div>
+            <div className="flex items-center justify-between pt-1 border-t border-white/5">
+              <span
+                data-testid="kpi-compressed-tokens-badge"
+                className="text-indigo-300 font-medium"
+              >
+                Compresor: -{(stats.totalTokensSavedCompression ?? 0).toLocaleString('es-ES')} tok.
+              </span>
+            </div>
           </div>
         }
       />

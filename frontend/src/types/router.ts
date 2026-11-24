@@ -167,6 +167,8 @@ export interface RouterResponse {
   latencyMs?: number;
   /** Cantidad de elementos sensibles (PII o secretos) anonimizados por el Escudo DLP antes del enrutamiento. */
   redactedItemsCount?: number;
+  /** Cantidad de tokens ahorrados gracias al Compresor Automático de Prompts antes de la inferencia. */
+  tokensSavedCompression?: number;
 }
 
 /**
@@ -200,6 +202,8 @@ export interface RouterStatsResponse {
   averageLatencyMs?: number;
   /** Total acumulado de elementos sensibles (PII/secretos) anonimizados por el Escudo DLP. */
   totalRedactedItems?: number;
+  /** Suma total acumulada de tokens ahorrados por el Compresor Automático de Prompts. */
+  totalTokensSavedCompression?: number;
 }
 
 /**

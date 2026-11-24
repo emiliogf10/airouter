@@ -444,46 +444,46 @@
     "semantic_hash": "8e6a771b98aa17464f71695f1957c341"
   },
   ".agentes/00-orquestador.md": {
-    "mtime": 1792588444.3888624,
-    "seen": 1795306514.4739091,
-    "ast_hash": "410ca43ddd02e4f20c19f49631bce67f",
-    "semantic_hash": "410ca43ddd02e4f20c19f49631bce67f"
+    "mtime": 1795306640.703948,
+    "seen": 1795307244.95351,
+    "ast_hash": "f29426b47a963941f1c614b35f0c38bb",
+    "semantic_hash": ""
   },
   ".agentes/01-backend-java.md": {
-    "mtime": 1792588444.3988404,
-    "seen": 1795306514.4739118,
-    "ast_hash": "1d62c95c64ad9b32e94ce171dd1f46f8",
-    "semantic_hash": "1d62c95c64ad9b32e94ce171dd1f46f8"
+    "mtime": 1795306642.8564794,
+    "seen": 1795307244.9535131,
+    "ast_hash": "d73aee8cb21fca2355c22f2b91703a2d",
+    "semantic_hash": ""
   },
   ".agentes/02-frontend-ui.md": {
-    "mtime": 1792588444.4067209,
-    "seen": 1795306514.4739146,
-    "ast_hash": "9f2c942d8410b4dbf0ca7920b11d7637",
-    "semantic_hash": "9f2c942d8410b4dbf0ca7920b11d7637"
+    "mtime": 1795306646.5089414,
+    "seen": 1795307244.953516,
+    "ast_hash": "588ba112ef2789151284d715a62ba857",
+    "semantic_hash": ""
   },
   ".agentes/03-qa-tester.md": {
-    "mtime": 1792588444.413273,
-    "seen": 1795306514.4739172,
-    "ast_hash": "784e66d4c6b2f7f383b4335fa511ee83",
-    "semantic_hash": "784e66d4c6b2f7f383b4335fa511ee83"
+    "mtime": 1795306652.461825,
+    "seen": 1795307244.9535186,
+    "ast_hash": "2f02f4517f75e2802027205cb4bfdabe",
+    "semantic_hash": ""
   },
   ".agentes/04-auditor-seguridad.md": {
-    "mtime": 1792588444.4192731,
-    "seen": 1795306514.4739196,
-    "ast_hash": "2863044fe1bb4496ceac9a6dc8bce849",
-    "semantic_hash": "2863044fe1bb4496ceac9a6dc8bce849"
+    "mtime": 1795306657.2106638,
+    "seen": 1795307244.9535215,
+    "ast_hash": "67c6f80b207bfd5e4f0aa2b4138dd098",
+    "semantic_hash": ""
   },
   ".agentes/05-arquitecto-datos.md": {
-    "mtime": 1792588444.423282,
-    "seen": 1795306514.4739223,
-    "ast_hash": "0183ca1197b0f546cb4e15043b37fc37",
-    "semantic_hash": "0183ca1197b0f546cb4e15043b37fc37"
+    "mtime": 1795306659.7478113,
+    "seen": 1795307244.953524,
+    "ast_hash": "cb05fcfdf327bd81b839a51b50017d69",
+    "semantic_hash": ""
   },
   "GEMINI.md": {
-    "mtime": 1792588444.425814,
-    "seen": 1795306514.4739249,
-    "ast_hash": "63feeb8d38d2e6f19f790dcfaf219333",
-    "semantic_hash": "63feeb8d38d2e6f19f790dcfaf219333"
+    "mtime": 1795306637.6742177,
+    "seen": 1795307244.95353,
+    "ast_hash": "3441a06b77a24cdb2b308b928a688c67",
+    "semantic_hash": ""
   },
   "PLAN_DE_ACCION.md": {
     "mtime": 1795304838.9160433,
@@ -520,5 +520,17 @@
     "seen": 1795306514.4739418,
     "ast_hash": "875b24efc05243315e9532c5a5e67622",
     "semantic_hash": "875b24efc05243315e9532c5a5e67622"
+  },
+  "AGENTS.md": {
+    "mtime": 1795306603.8241348,
+    "seen": 1795307244.953527,
+    "ast_hash": "9c9200425215c39e62e5f02c4a881233",
+    "semantic_hash": ""
+  },
+  "frontend/package-lock.json": {
+    "mtime": 1795303229.1940894,
+    "seen": 1795307244.9535503,
+    "ast_hash": "27ecbbbe5f817dad797e8a1b1b345fe9",
+    "semantic_hash": ""
   }
 }

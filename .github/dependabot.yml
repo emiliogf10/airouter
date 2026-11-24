@@ -48,7 +48,7 @@ updates:
       - "dependencies"
       - "frontend"
       - "security"
-    # Agrupar vite y sus plugins para evitar conflictos de peerDependencies (ERESOLVE)
+    # Agrupar vite y eslint con sus plugins para evitar conflictos de peerDependencies (ERESOLVE)
     groups:
       vite-ecosystem:
         patterns:
@@ -56,12 +56,33 @@ updates:
           - "@vitejs/*"
           - "vitest"
           - "@testing-library/*"
-    # Ignorar saltos de versión mayor (Major Breaking Changes) aislados en vite y vitest
-    # que rompen peerDependencies con @vitejs/plugin-react y los tipos de @testing-library/jest-dom
+        update-types:
+          - "minor"
+          - "patch"
+      eslint-ecosystem:
+        patterns:
+          - "eslint"
+          - "@eslint/*"
+          - "eslint-plugin-*"
+          - "typescript-eslint"
+        update-types:
+          - "minor"
+          - "patch"
+    # Ignorar saltos de versión mayor (Major Breaking Changes) que rompen peerDependencies o reglas base
     ignore:
       - dependency-name: "vite"
         update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitejs/*"
+        update-types: ["version-update:semver-major"]
       - dependency-name: "vitest"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@testing-library/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@eslint/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint-plugin-*"
         update-types: ["version-update:semver-major"]
 
   # ----------------------------------------------------------------------------

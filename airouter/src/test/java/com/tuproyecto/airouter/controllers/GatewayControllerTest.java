@@ -697,4 +697,36 @@ class GatewayControllerTest {
                 .andExpect(jsonPath("$.totalRedactedItems", is(2)))
                 .andExpect(jsonPath("$.averageLatencyMs", greaterThanOrEqualTo(1.0)));
     }
+
+    /**
+     * Verifica de extremo a extremo el Compresor Automático de Prompts en {@code POST /api/v1/router/prompt}
+     * y {@code GET /api/v1/router/stats}: al enviar un prompt con espacios redundantes y signos de puntuación
+     * repetidos, devuelve el texto limpio en {@code $.promptContent}, {@code $.tokensSavedCompression >= 1}
+     * y refleja el acumulado en {@code $.totalTokensSavedCompression} de {@code /stats}.
+     *
+     * @throws Exception si ocurre un error durante las peticiones simuladas
+     */
+    @Test
+    @DisplayName("Compresor de Prompts E2E: POST /prompt debe comprimir ruido sintáctico, devolver tokensSavedCompression>=1 y actualizar /stats")
+    void shouldCompressNoisyPromptAndReturnTokensSavedInPromptAndStatsEndpoints() throws Exception {
+        String noisyPayload = """
+                {
+                    "userId": "compressor-e2e-user",
+                    "prompt": "   Hola     equipo   ,   ¿podéis    revisar    este    resumen   ????   Gracias   !!!!   "
+                }
+                """;
+
+        mockMvc.perform(post("/api/v1/router/prompt")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(noisyPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId", is("compressor-e2e-user")))
+                .andExpect(jsonPath("$.promptContent", is("Hola equipo, ¿podéis revisar este resumen? Gracias!")))
+                .andExpect(jsonPath("$.tokensSavedCompression", greaterThanOrEqualTo(1)));
+
+        mockMvc.perform(get("/api/v1/router/stats").param("userId", "compressor-e2e-user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalRequests", is(1)))
+                .andExpect(jsonPath("$.totalTokensSavedCompression", greaterThanOrEqualTo(1)));
+    }
 }

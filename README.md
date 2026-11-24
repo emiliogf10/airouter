@@ -69,6 +69,7 @@ El esquema de base de datos está gobernado exclusivamente por **Flyway** median
 * **`V4__create_api_keys_table.sql`**: Crea la tabla `api_keys` (`id`, `user_id`, `key_name`, `key_prefix`, `key_hash` SHA-256 único, `active`, `created_at`) para la gestión criptográfica de claves API por usuario sin almacenar secretos en texto plano.
 * **`V5__create_user_wallets_table.sql`**: Crea la tabla `user_wallets` (`id`, `user_id` único, `balance_usd`, `total_topped_up_usd`, `wallet_enforced`, `last_payment_method`, `updated_at`) para la **Billetera Prepago (*Token Credits Wallet*) y Pasarela de Pagos (`Billing`)**.
 * **`V6__add_latency_and_dlp_to_request_logs.sql`**: Añade a `request_logs` las columnas `latency_ms` (`BIGINT NOT NULL DEFAULT 0`) y `redacted_items_count` (`INTEGER NOT NULL DEFAULT 0`) para la **Telemetría de Latencia en Tiempo Real** y el **Escudo DLP de Privacidad (*PII / Secret Redaction*)**.
+* **`V7__add_compressed_tokens_saved_to_request_logs.sql`**: Añade a `request_logs` la columna `tokens_saved_compression` (`INTEGER NOT NULL DEFAULT 0`) para contabilizar los tokens ahorrados por el **Compresor Automático de Prompts (*Prompt Trimming & Token Optimizer*)**.
 
 ### Acceso a la Consola H2 (Desarrollo)
 Con el backend en ejecución, puedes inspeccionar la base de datos en memoria desde el navegador:

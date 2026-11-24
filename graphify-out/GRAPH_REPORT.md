@@ -1,17 +1,17 @@
 # Graph Report - airouter  (2026-11-22)
 
 ## Corpus Check
-- 87 files · ~65,656 words
+- 88 files · ~67,995 words
 - Verdict: corpus is large enough that graph structure adds value.
-- Unclassified: 15 file(s) not represented in the graph (top: (none) 8, .properties 3, .example 1)
+- Unclassified: 14 file(s) not represented in the graph (top: (none) 7, .properties 3, .example 1)
 
 ## Summary
-- 696 nodes · 1793 edges · 34 communities (19 shown, 15 thin omitted)
-- Extraction: 88% EXTRACTED · 12% INFERRED · 0% AMBIGUOUS · INFERRED: 211 edges (avg confidence: 0.85)
+- 705 nodes · 1823 edges · 41 communities (18 shown, 23 thin omitted)
+- Extraction: 88% EXTRACTED · 12% INFERRED · 0% AMBIGUOUS · INFERRED: 220 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `3bdb035c`
+- Built from commit: `1401763f`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -38,17 +38,20 @@
 - Flyway FinOps Budgets Schema (V2)
 - Flyway Prepaid Wallets Schema (V5)
 - TypeScript Project References
-- devDependencies
+- tailwindcss@^4.1.4
 - org.springframework.boot.test.context.SpringBootTest
 - Maven Artifact Coordinate
 - AGENTS.md
+- RouterService.java
+- @testing-library/react
+- @types/react@^19.1.2
 
 ## God Nodes (most connected - your core abstractions)
-1. `RouterService` - 59 edges
-2. `RouterServiceTest` - 36 edges
-3. `RequestLog` - 31 edges
-4. `PromptRequest` - 23 edges
-5. `GatewayControllerTest` - 22 edges
+1. `RouterService` - 61 edges
+2. `RouterServiceTest` - 39 edges
+3. `RequestLog` - 32 edges
+4. `PromptRequest` - 24 edges
+5. `GatewayControllerTest` - 23 edges
 6. `ApiKey` - 22 edges
 7. `GatewayController` - 21 edges
 8. `UserWallet` - 21 edges
@@ -75,31 +78,31 @@
 - **End-to-End Request Routing, FinOps, DLP & Security Pipeline** — docs_manual_del_programador_security_hardening, docs_manual_del_programador_routerservice, readme_hybrid_routing_3_tiers, readme_flyway_migrations_v1_v6, docs_manual_del_programador_frontend_architecture [EXTRACTED 1.00]
 - **AI Cost Router Domain-Specialized Multi-Agent Team** — agentes_00_orquestador_tech_lead, agentes_01_backend_java_specialist, agentes_02_frontend_ui_specialist, agentes_03_qa_tester_specialist, agentes_04_auditor_seguridad_specialist, agentes_05_arquitecto_datos_specialist [EXTRACTED 1.00]
 
-## Communities (34 total, 15 thin omitted)
+## Communities (41 total, 23 thin omitted)
 
 ### Community 0 - "Frontend Dashboard & UI Components"
 Cohesion: 0.06
-Nodes (84): App(), INITIAL_STATS, ApiKeyManagerCard(), ApiKeyManagerCardProps, legacyCopyApiKeyFallback(), BudgetControlCard(), BudgetControlCardProps, getStatusPresentation() (+76 more)
+Nodes (85): vitest@^3.1.2, App(), INITIAL_STATS, ApiKeyManagerCard(), ApiKeyManagerCardProps, legacyCopyApiKeyFallback(), BudgetControlCard(), BudgetControlCardProps (+77 more)
 
 ### Community 1 - "RequestLog"
 Cohesion: 0.10
 Nodes (4): ApiKey, RequestLog, UserBudget, UserWallet
 
 ### Community 2 - "Core Routing & DLP Service"
-Cohesion: 0.08
+Cohesion: 0.09
 Nodes (5): PromptRequest, GeminiRestClientTest, SecurityAndRateLimitingTest, GatewayControllerTest, RouterServiceTest
 
 ### Community 3 - "GatewayController.java"
-Cohesion: 0.05
-Nodes (15): GatewayController, BudgetExceededException, GlobalExceptionHandler, InvalidApiKeyException, InvalidPromptException, ApiKeyCreatedResponse, ApiKeyResponse, CreateApiKeyRequest (+7 more)
+Cohesion: 0.06
+Nodes (13): GatewayController, BudgetExceededException, GlobalExceptionHandler, ApiKeyCreatedResponse, ApiKeyResponse, CreateApiKeyRequest, ErrorResponse, RouterResponse (+5 more)
 
 ### Community 4 - "Google Gemini Hybrid Client"
-Cohesion: 0.07
+Cohesion: 0.06
 Nodes (10): GeminiRestClient, GeminiCandidate, GeminiContent, GeminiGenerateRequest, GeminiGenerateResponse, GeminiPart, RateLimitingFilter, RateLimitBucket (+2 more)
 
 ### Community 6 - "RouterService"
-Cohesion: 0.05
-Nodes (3): RouterService, CachedPromptEntry, DlpSanitizationResult
+Cohesion: 0.17
+Nodes (4): RouterService, CachedPromptEntry, DlpSanitizationResult, PromptCompressionResult
 
 ### Community 7 - "Multi-Agent Architecture & Docs"
 Cohesion: 0.14
@@ -114,12 +117,12 @@ Cohesion: 0.11
 Nodes (17): compilerOptions, allowImportingTsExtensions, isolatedModules, lib, module, moduleDetection, moduleResolution, noEmit (+9 more)
 
 ### Community 11 - "Frontend Package Dependencies"
-Cohesion: 0.18
-Nodes (10): @testing-library/react@^16.3.0, @testing-library/user-event@^14.6.1, @types/node@^22.14.1, name, private, type, version, @testing-library/react (+2 more)
+Cohesion: 0.13
+Nodes (14): jsdom@^26.1.0, @testing-library/user-event@^14.6.1, @types/node@^22.14.1, @types/react-dom@^19.1.2, typescript@~5.8.3, name, private, type (+6 more)
 
 ### Community 12 - "ESLint & Code Quality"
-Cohesion: 0.18
-Nodes (10): @eslint/js@^9.25.0, eslint-plugin-react-hooks@^5.2.0, eslint-plugin-react-refresh@^0.5.7, globals@^16.0.0, typescript-eslint@^8.72.2, @eslint/js, eslint-plugin-react-hooks, eslint-plugin-react-refresh (+2 more)
+Cohesion: 0.19
+Nodes (13): devDependencies, eslint@^9.25.0, @eslint/js@^9.25.0, eslint-plugin-react-hooks@^5.2.0, eslint-plugin-react-refresh@^0.5.7, globals@^16.0.0, typescript-eslint@^8.72.2, eslint (+5 more)
 
 ### Community 14 - "RequestLogRepositoryTest"
 Cohesion: 0.36
@@ -149,29 +152,25 @@ Nodes (6): scripts, build, dev, lint, preview, test
 Cohesion: 0.83
 Nodes (3): api_keys, idx_api_keys_key_hash, idx_api_keys_user_id
 
-### Community 25 - "devDependencies"
-Cohesion: 0.14
-Nodes (14): devDependencies, eslint@^9.25.0, jsdom@^26.1.0, tailwindcss@^4.1.4, @types/react@^19.1.2, @types/react-dom@^19.1.2, typescript@~5.8.3, vitest@^3.1.2 (+6 more)
-
 ## Knowledge Gaps
 - **5 isolated node(s):** `RFC-4180`, `RFC-4180`, `com.tuproyecto:airouter`, `Frontend HTML Entrypoint & Color-Scheme Bootstrapper (frontend/index.html)`, `QA Tester Specialist (03-qa-tester)`
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 131 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **15 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 132 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **23 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `RouterService` connect `RouterService` to `RequestLog`, `Core Routing & DLP Service`, `GatewayController.java`, `Google Gemini Hybrid Client`, `Backend Integration & Security Tests`, `RouterServiceTest.java`?**
-  _High betweenness centrality (0.066) - this node is a cross-community bridge._
+- **Why does `RouterService` connect `RouterService` to `RequestLog`, `.createApiKey`, `org.springframework.transaction.annotation.Transactional`, `GatewayController.java`, `.getUserBudget`, `RouterService.java`, `Core Routing & DLP Service`, `Backend Integration & Security Tests`, `Google Gemini Hybrid Client`, `RouterServiceTest.java`?**
+  _High betweenness centrality (0.068) - this node is a cross-community bridge._
 - **What connects `RFC-4180`, `RFC-4180`, `com.tuproyecto:airouter` to the rest of the system?**
   _5 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Frontend Dashboard & UI Components` be split into smaller, more focused modules?**
-  _Cohesion score 0.05714285714285714 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.056251102098395345 - nodes in this community are weakly interconnected._
 - **Why does `RateLimitingFilter` connect `Google Gemini Hybrid Client` to `Core Routing & DLP Service`?**
-  _High betweenness centrality (0.026) - this node is a cross-community bridge._
+  _High betweenness centrality (0.025) - this node is a cross-community bridge._
 - **Should `RequestLog` be split into smaller, more focused modules?**
-  _Cohesion score 0.0987012987012987 - nodes in this community are weakly interconnected._
-- **Why does `RequestLog` connect `RequestLog` to `Core Routing & DLP Service`, `RouterServiceTest.java`, `RequestLogRepositoryTest`, `RouterService`?**
-  _High betweenness centrality (0.023) - this node is a cross-community bridge._
+  _Cohesion score 0.09935064935064936 - nodes in this community are weakly interconnected._
+- **Why does `RequestLog` connect `RequestLog` to `Core Routing & DLP Service`, `RouterServiceTest.java`, `RouterService.java`, `RequestLogRepositoryTest`?**
+  _High betweenness centrality (0.024) - this node is a cross-community bridge._
 - **Should `Core Routing & DLP Service` be split into smaller, more focused modules?**
-  _Cohesion score 0.0810126582278481 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.08526315789473685 - nodes in this community are weakly interconnected._

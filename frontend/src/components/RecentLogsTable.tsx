@@ -235,6 +235,14 @@ export const RecentLogsTable: React.FC<RecentLogsTableProps> = ({
                             DLP ({log.redactedItemsCount})
                           </span>
                         )}
+                        {(log.tokensSavedCompression ?? 0) > 0 && (
+                          <span
+                            data-testid={`log-compression-badge-${log.id}`}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-500/15 text-indigo-300 border border-indigo-500/30"
+                          >
+                            -{log.tokensSavedCompression} tok.
+                          </span>
+                        )}
                         <span
                           data-testid={`log-latency-${log.id}`}
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono bg-zinc-800/80 text-zinc-300 border border-white/10"

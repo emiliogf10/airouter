@@ -381,4 +381,36 @@ class RequestLogRepositoryTest {
         assertEquals(42L, savedExplicit.getLatencyMs());
         assertEquals(3, savedExplicit.getRedactedItemsCount());
     }
+
+    /**
+     * Verifica la migración Flyway {@code V7__add_prompt_compression_column_to_request_logs.sql}:
+     * comprueba la persistencia y recuperación en H2 de la columna {@code tokensSavedCompression}
+     * tanto con un valor explícito (ej. {@code 14}) como con su valor por defecto ({@code 0})
+     * asignado mediante {@code @PrePersist} cuando se recibe nulo.
+     */
+    @Test
+    @DisplayName("Migración V7 (tokens_saved_compression): Debe persistir tokensSavedCompression explícito (14) o su valor por defecto (0)")
+    void shouldPersistTokensSavedCompressionWithDefaultZeroAndExplicitValue() {
+        RequestLog defaultCompressionLog = RequestLog.builder()
+                .userId("comp-user-01")
+                .promptContent("Prompt ya compacto")
+                .modelRouted(RouterService.MODEL_FAST)
+                .tokensEstimated(5)
+                .tokensSavedCompression(null)
+                .build();
+
+        RequestLog explicitCompressionLog = RequestLog.builder()
+                .userId("comp-user-02")
+                .promptContent("Prompt optimizado tras eliminar espacios redundantes")
+                .modelRouted(RouterService.MODEL_FAST)
+                .tokensEstimated(13)
+                .tokensSavedCompression(14)
+                .build();
+
+        RequestLog savedDefault = requestLogRepository.saveAndFlush(defaultCompressionLog);
+        RequestLog savedExplicit = requestLogRepository.saveAndFlush(explicitCompressionLog);
+
+        assertEquals(0, savedDefault.getTokensSavedCompression(), "tokensSavedCompression debe inicializarse a 0 por defecto cuando es nulo");
+        assertEquals(14, savedExplicit.getTokensSavedCompression());
+    }
 }

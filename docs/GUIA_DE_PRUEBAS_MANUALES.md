@@ -166,3 +166,20 @@ Abre tu navegador en: 👉 **`http://localhost:5173`**
 - [ ] **12.2. Resultado esperado:**
   * En la tarjeta de resultado aparecen los nuevos badges **`DLP: 4 datos protegidos`** (en color ámbar) y el tiempo de respuesta en milisegundos (**`X ms`**).
   * En la tabla inferior **"Historial de Peticiones Recientes"** y al abrir **`Ver detalle`** (`LogInspectorDrawer`), comprueba que el texto guardado y enviado al LLM ya está completamente anonimizado (`[EMAIL_REDACTED]`, `[ID_REDACTED]`, `[PHONE_REDACTED]`, `[SECRET_REDACTED]`) y que en las tarjetas KPI superiores se actualizan los badges **`~X ms`** y **`DLP: X protegidos`**.
+
+---
+
+### 13. Compresor Automático de Prompts (*Prompt Trimming & Token Optimizer*)
+- [ ] **13.1. Probar compactación y ahorro extra de tokens:**
+  * En el simulador, escribe un prompt con espacios repetidos, varias líneas en blanco y signos de puntuación redundantes, por ejemplo:
+    ```text
+    Hola   ,    ¿puedes     explicarme   qué   es   Java   21   ????
+
+
+
+    Muchas     gracias   !!!!
+    ```
+  * Pulsa **`Evaluar y Enrutar Prompt`**.
+- [ ] **13.2. Resultado esperado:**
+  * En la tarjeta de resultado aparece el nuevo badge violeta **`-X tok. comprimidos`**.
+  * En la tarjeta KPI superior **"Tokens Estimados Totales"** aumenta el contador **`Compresor: -X tok.`**, y al abrir **`Ver detalle`** (`LogInspectorDrawer`) en la fila de la tabla se muestra el texto limpio y la etiqueta **`-X tokens ahorrados por compresión`**.

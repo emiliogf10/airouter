@@ -5,7 +5,8 @@ import java.math.BigDecimal;
 /**
  * DTO de salida que encapsula las métricas agregadas de uso de tokens, distribución de tráfico
  * por modelo LLM, aciertos de la Caché Semántica, latencia media extremo a extremo, elementos
- * anonimizados por el Escudo DLP y el ahorro económico estimado por el enrutador inteligente (AI Cost Router).
+ * anonimizados por el Escudo DLP, tokens ahorrados por compresión automática y el ahorro económico
+ * estimado por el enrutador inteligente (AI Cost Router).
  *
  * @param totalRequests               número total de peticiones procesadas
  * @param totalTokensEstimated        suma total de tokens estimados en todas las peticiones
@@ -20,6 +21,7 @@ import java.math.BigDecimal;
  * @param cacheHits                   cantidad total de peticiones resueltas mediante la Caché Semántica a coste cero ({@code $0.000000 USD})
  * @param averageLatencyMs            latencia media extremo a extremo en milisegundos redondeada a 2 decimales ({@code 0.0} si no hay peticiones)
  * @param totalRedactedItems          suma total de elementos sensibles (PII o secretos) anonimizados por el Escudo DLP de Privacidad
+ * @param totalTokensSavedCompression suma total de tokens ahorrados gracias al Compresor Automático de Prompts
  */
 public record RouterStatsResponse(
         long totalRequests,
@@ -34,12 +36,14 @@ public record RouterStatsResponse(
         double savingsPercentage,
         long cacheHits,
         double averageLatencyMs,
-        long totalRedactedItems
+        long totalRedactedItems,
+        long totalTokensSavedCompression
 ) {
 
     /**
      * Constructor de compatibilidad de 10 argumentos que inicializa {@code cacheHits} en {@code 0L},
-     * {@code averageLatencyMs} en {@code 0.0} y {@code totalRedactedItems} en {@code 0L}.
+     * {@code averageLatencyMs} en {@code 0.0}, {@code totalRedactedItems} en {@code 0L} y
+     * {@code totalTokensSavedCompression} en {@code 0L}.
      *
      * @param totalRequests               número total de peticiones procesadas
      * @param totalTokensEstimated        suma total de tokens estimados en todas las peticiones
@@ -76,13 +80,14 @@ public record RouterStatsResponse(
                 savingsPercentage,
                 0L,
                 0.0,
+                0L,
                 0L
         );
     }
 
     /**
-     * Constructor de compatibilidad de 11 argumentos que inicializa {@code averageLatencyMs} en {@code 0.0}
-     * y {@code totalRedactedItems} en {@code 0L}.
+     * Constructor de compatibilidad de 11 argumentos que inicializa {@code averageLatencyMs} en {@code 0.0},
+     * {@code totalRedactedItems} en {@code 0L} y {@code totalTokensSavedCompression} en {@code 0L}.
      *
      * @param totalRequests               número total de peticiones procesadas
      * @param totalTokensEstimated        suma total de tokens estimados en todas las peticiones
@@ -121,6 +126,56 @@ public record RouterStatsResponse(
                 savingsPercentage,
                 cacheHits,
                 0.0,
+                0L,
+                0L
+        );
+    }
+
+    /**
+     * Constructor de compatibilidad de 13 argumentos que inicializa {@code totalTokensSavedCompression} en {@code 0L}.
+     *
+     * @param totalRequests               número total de peticiones procesadas
+     * @param totalTokensEstimated        suma total de tokens estimados en todas las peticiones
+     * @param fastModelRequests           cantidad de peticiones enrutadas al modelo económico
+     * @param proModelRequests            cantidad de peticiones enrutadas al modelo avanzado
+     * @param fastModelTokens             suma de tokens del modelo económico
+     * @param proModelTokens              suma de tokens del modelo avanzado
+     * @param estimatedActualCostUsd      coste real estimado en USD
+     * @param estimatedBaselineProCostUsd coste base hipotético en USD
+     * @param estimatedSavingsUsd         ahorro neto estimado en USD
+     * @param savingsPercentage           porcentaje de ahorro económico
+     * @param cacheHits                   cantidad total de peticiones resueltas desde la Caché Semántica
+     * @param averageLatencyMs            latencia media extremo a extremo en milisegundos
+     * @param totalRedactedItems          suma total de elementos sensibles anonimizados por el Escudo DLP
+     */
+    public RouterStatsResponse(
+            long totalRequests,
+            long totalTokensEstimated,
+            long fastModelRequests,
+            long proModelRequests,
+            long fastModelTokens,
+            long proModelTokens,
+            BigDecimal estimatedActualCostUsd,
+            BigDecimal estimatedBaselineProCostUsd,
+            BigDecimal estimatedSavingsUsd,
+            double savingsPercentage,
+            long cacheHits,
+            double averageLatencyMs,
+            long totalRedactedItems) {
+        this(
+                totalRequests,
+                totalTokensEstimated,
+                fastModelRequests,
+                proModelRequests,
+                fastModelTokens,
+                proModelTokens,
+                estimatedActualCostUsd,
+                estimatedBaselineProCostUsd,
+                estimatedSavingsUsd,
+                savingsPercentage,
+                cacheHits,
+                averageLatencyMs,
+                totalRedactedItems,
                 0L
         );
     }

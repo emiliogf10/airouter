@@ -60,7 +60,7 @@ flowchart TB
 | **Motor BD** | H2 Database (en memoria `airouterdb`) / PostgreSQL | Base de datos transaccional para desarrollo/tests e integración continua. |
 | **Frontend Core** | React 19 + TypeScript 5.9 + Vite 8 | Interfaz de usuario reactiva con tipado estático estricto. |
 | **Estilos y Gráficas** | Tailwind CSS v4 (`@tailwindcss/vite`), Lucide React, Recharts | Sistema de diseño estilo Vercel / `shadcn/ui` con **0 estilos en línea (`style=`)**. |
-| **Calidad y CI/CD** | JUnit 5, Mockito, MockMvc (72 tests) + Vitest, RTL (24 tests) + GitHub Actions & Dependabot | 96 tests automatizados ejecutados en cada Pull Request. |
+| **Calidad y CI/CD** | JUnit 5, Mockito, MockMvc (77 tests) + Vitest, RTL (25 tests) + GitHub Actions & Dependabot | 102 tests automatizados ejecutados en cada Pull Request. |
 
 ---
 
@@ -84,6 +84,8 @@ Los scripts SQL residen en `airouter/src/main/resources/db/migration/`:
    * Crea la tabla `user_wallets` (`id UUID PK`, `user_id VARCHAR(120) UNIQUE`, `balance_usd NUMERIC(19, 6)`, `total_topped_up_usd NUMERIC(19, 6)`, `wallet_enforced BOOLEAN DEFAULT FALSE`, `last_payment_method VARCHAR(40)`, `updated_at TIMESTAMP`) e índice `idx_user_wallets_user_id`.
 6. **`V6__add_latency_and_dlp_to_request_logs.sql`:**
    * Añade a `request_logs` las columnas `latency_ms BIGINT NOT NULL DEFAULT 0` (latencia extremo a extremo en milisegundos) y `redacted_items_count INTEGER NOT NULL DEFAULT 0` (contador de elementos sensibles anonimizados por el Escudo DLP).
+7. **`V7__add_compressed_tokens_saved_to_request_logs.sql`:**
+   * Añade a `request_logs` la columna `tokens_saved_compression INTEGER NOT NULL DEFAULT 0` (contador de tokens ahorrados por el Compresor Automático de Prompts).
 
 ### 2.2. Reglas de Diseño en Entidades JPA (`RequestLog.java` y `UserBudget.java`)
 * **Prohibición de `@Data` en JPA:** Conforme a `GEMINI.md`, las entidades utilizan exclusivamente `@Entity`, `@Getter`, `@Setter`, `@Builder`, `@NoArgsConstructor` y `@AllArgsConstructor`.
